@@ -1,0 +1,4 @@
+# 大肥鱼 bundle patch：插入大肥鱼插件行（host 半侧 + client 半侧同挂裸包名行）。
+- insert:
+    - id: dafeiyu
+      name: dafeiyu
