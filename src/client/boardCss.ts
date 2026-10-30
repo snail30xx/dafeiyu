@@ -305,6 +305,19 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .qchip:hover .ic{transform:scale(1.18) rotate(-6deg)}
 .dfy-root .qchip:hover{border-color:rgba(8,145,178,.6);box-shadow:0 0 20px rgba(8,145,178,.15);transform:translateY(-2px)}
 .dfy-root .wb .ask-box{margin-top:12px;flex:none}
+/* byClaude-start 人机交互拦截条：宿主 approval/question 待交互投影（琥珀警示色，byClaude） */
+.dfy-root .dfy-intercepts{display:flex;flex-direction:column;gap:8px;margin-top:10px;flex:none}
+.dfy-root .dfy-intercept{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:14px;background:linear-gradient(150deg,rgba(245,158,11,.12),rgba(8,145,178,.06));border:1px solid rgba(217,119,6,.45);box-shadow:0 10px 28px -16px rgba(217,119,6,.5);animation:dfy-rise .3s ease both}
+.dfy-root .dfy-intercept .ix-ic{width:30px;height:30px;border-radius:10px;flex:none;display:grid;place-items:center;color:#d97706;background:rgba(251,191,36,.16);border:1px solid rgba(217,119,6,.35)}
+.dfy-root .dfy-intercept .ix-body{flex:1;min-width:0}
+.dfy-root .dfy-intercept .ix-title{font-size:12px;font-weight:600;color:#92400e;letter-spacing:.02em}
+.dfy-root .dfy-intercept .ix-sub{font-size:11px;color:var(--sub);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}
+.dfy-root .dfy-intercept .ix-acts{display:flex;gap:8px;flex:none}
+.dfy-root .dfy-intercept .ix-btn{font-size:11.5px;padding:6px 12px;border-radius:9px;border:1px solid rgba(8,145,178,.45);background:rgba(8,145,178,.1);color:#0e7490;font-weight:600;transition:.15s;white-space:nowrap}
+.dfy-root .dfy-intercept .ix-btn:hover{background:rgba(8,145,178,.18);transform:translateY(-1px)}
+.dfy-root .dfy-intercept .ix-btn.deny{border-color:rgba(15,23,42,.2);background:rgba(15,23,42,.04);color:var(--sub)}
+.dfy-root .dfy-intercept .ix-btn:disabled{opacity:.5;transform:none;cursor:default}
+/* byClaude-end */
 .dfy-root .statusbar{display:flex;align-items:center;gap:14px;padding:8px 6px 2px;font-size:11px;color:var(--faint);flex:none;flex-wrap:wrap}
 .dfy-root .statusbar .sti{display:flex;align-items:center;gap:6px}
 .dfy-root .statusbar .sti.ok{color:var(--ok)}

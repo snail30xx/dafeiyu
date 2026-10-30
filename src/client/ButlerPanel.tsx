@@ -362,6 +362,95 @@ function MsgList({ rows, running, thinking, t, digestRef, userAvatar }: {
   )
 }
 
+// byClaude-start 人机交互拦截条：宿主 approval（工具审批）/ question（选择题）待交互，
+// 官方 UI 只渲染在 Conversation 视图，面板占用 main 槽时主人看不到；这里把待交互
+// 投影进面板输入条上方，approval 直接作答、question 跳官方对话（byClaude）
+/** 宿主 approval 待交互的结构探测面（dsh-client-ui-approval 的 PendingApproval）。 */
+interface ApprovalInteractionLike {
+  readonly kind: 'approval'
+  readonly key: string
+  readonly toolName?: string
+  readonly reason?: string
+  readonly displayReason?: { readonly en: string; readonly [locale: string]: string } | undefined
+  answerable?: boolean
+  answer?: (outcome: 'allowed-once' | 'rejected') => Promise<void>
+}
+
+/** question / plan-review 及未知 kind 的兜底面：面板内不答题，跳官方对话处理。 */
+interface OtherInteractionLike {
+  readonly kind: string
+  readonly key: string
+  readonly questions?: readonly { readonly question?: string }[] | undefined
+}
+
+/** 面板待交互卡：kind 判定后的渲染数据。 */
+export interface InterceptCard {
+  readonly sessionId: SessionId
+  readonly key: string
+  readonly kind: string
+  readonly approval: ApprovalInteractionLike | undefined
+  readonly firstQuestion: string | undefined
+  readonly isButler: boolean
+  readonly title: string | undefined
+}
+
+/**
+ * 人机交互拦截条（设计语义：肥鱼把宿主的「弹选项」叼到主人面前）。
+ * approval：允许一次 / 拒绝；其余 kind：跳官方对话。
+ */
+function InterceptBar({ cards, allowLabel, rejectLabel, goLabel, approveTitle, questionTitle, butlerLabel, onAllow, onReject, onOpen }: {
+  cards: readonly InterceptCard[]
+  allowLabel: string
+  rejectLabel: string
+  goLabel: string
+  approveTitle: string
+  questionTitle: string
+  butlerLabel: string
+  onAllow: (card: InterceptCard) => void
+  onReject: (card: InterceptCard) => void
+  onOpen: (sessionId: SessionId) => void
+}) {
+  if (cards.length === 0) return null
+  return (
+    <div className="dfy-intercepts" role="alert">
+      {cards.slice(0, 3).map(card => {
+        const approval = card.approval
+        const subject = card.isButler ? butlerLabel : (card.title ?? card.sessionId)
+        return (
+          <div key={card.key} className="dfy-intercept">
+            <div className="ix-ic" aria-hidden="true"><Icon n={approval !== undefined ? 'shield-check' : 'message-circle'} className="ic" /></div>
+            <div className="ix-body">
+              <div className="ix-title">{approval !== undefined ? approveTitle : questionTitle}</div>
+              <div className="ix-sub" title={approval !== undefined ? (approval.reason ?? approval.toolName ?? '') : (card.firstQuestion ?? '')}>
+                {approval !== undefined
+                  ? `${approval.toolName ?? 'tool'} · ${card.isButler ? subject : subject}`
+                  : (card.firstQuestion ?? subject)}
+              </div>
+            </div>
+            {approval !== undefined ? (
+              <div className="ix-acts">
+                <button type="button" className="ix-btn" disabled={approval.answerable === false} onClick={() => { onAllow(card) }}>
+                  {allowLabel}
+                </button>
+                <button type="button" className="ix-btn deny" disabled={approval.answerable === false} onClick={() => { onReject(card) }}>
+                  {rejectLabel}
+                </button>
+              </div>
+            ) : (
+              <div className="ix-acts">
+                <button type="button" className="ix-btn" onClick={() => { onOpen(card.sessionId) }}>
+                  {goLabel}
+                </button>
+              </div>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+// byClaude-end
+
 /**
  * 任务卡（设计稿 .tcard）：点击跳会话；LIVE = 流光描边 + 步骤行 + indeterminate 进度条；
  * 待确认 = 批准（收尾）/ 拒绝（忽略）双动作；明细行显示项目目录名。
@@ -601,7 +690,7 @@ function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect
  * @returns 工作台/控制台双视图 + 自绘输入条 + 官方完整对话浮层。
  */
 export function ButlerPanel({
-  useSessionList, useWorkspaceList, acquire, openSession, models, t, renderSlot, SessionProvider,
+  useSessionList, useWorkspaceList, useSessionStatus, acquire, openSession, models, t, renderSlot, SessionProvider,
 }: ButlerPanelProps) {
   const [reference, setReference] = useState<SessionReference | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -788,6 +877,55 @@ export function ButlerPanel({
       .slice(0, DONE_LIST_CAP)
     return { ongoing, pending, done }
   }, [listState, workspaceState, doneMap, ignoreMap, reference?.sessionId])
+
+  // byClaude-start 人机交互拦截：宿主把 approval/question 挂在 SessionStatus.pendingInteraction，
+  // 官方卡片只进 Conversation 视图；面板自取全表投影成拦截卡（管家会话优先，最多 3 张）。
+  // useSessionStatus 由 ui-session 标准面注入（boot 级，面板渲染前就绪）；
+  // 可选链防御极端未注册态：挂载后 props 引用稳定，不构成条件 hook。
+  const statusMap = useSessionStatus?.(value => value)
+  const interceptCards = useMemo(() => {
+    const butlerId = reference?.sessionId
+    const cards: InterceptCard[] = []
+    for (const [sessionId, status] of statusMap ?? []) {
+      const it = status?.pendingInteraction
+      if (it === undefined || it === null || typeof it !== 'object') continue
+      const loose = it as unknown as ApprovalInteractionLike & OtherInteractionLike
+      if (typeof loose.key !== 'string') continue
+      const isApproval = loose.kind === 'approval' && typeof loose.answer === 'function'
+      const question = Array.isArray(loose.questions) ? loose.questions[0]?.question : undefined
+      cards.push({
+        sessionId,
+        key: loose.key,
+        kind: loose.kind,
+        approval: isApproval ? loose : undefined,
+        firstQuestion: typeof question === 'string' ? question : undefined,
+        isButler: sessionId === butlerId,
+        title: listState.byId[sessionId]?.title,
+      })
+    }
+    cards.sort((left, right) => (Number(right.isButler) - Number(left.isButler)) || left.key.localeCompare(right.key))
+    return cards
+  }, [statusMap, listState, reference?.sessionId])
+  const settleApproval = useCallback((card: InterceptCard, outcome: 'allowed-once' | 'rejected') => {
+    const approval = card.approval
+    if (approval === undefined || approval.answerable === false) return
+    void approval.answer?.(outcome).catch(() => undefined)
+  }, [])
+  const interceptBar = (
+    <InterceptBar
+      cards={interceptCards}
+      allowLabel={t('intercept.approve.allow')}
+      rejectLabel={t('intercept.approve.reject')}
+      goLabel={t('intercept.question.go')}
+      approveTitle={t('intercept.approve')}
+      questionTitle={t('intercept.question')}
+      butlerLabel={t('intercept.butler')}
+      onAllow={card => { settleApproval(card, 'allowed-once') }}
+      onReject={card => { settleApproval(card, 'rejected') }}
+      onOpen={openSession}
+    />
+  )
+  // byClaude-end
 
   // 有对话从进行中离开（完成/中断）：该卡高亮脉冲一次 + 她蹦一下（她注意到了）。
   const prevOngoingRef = useRef<readonly SessionId[] | null>(null)
@@ -1033,6 +1171,7 @@ export function ButlerPanel({
               ><Icon n={icon} className="ic sm" />{t(label)}</button>
             ))}
           </div>
+          {interceptBar}
           <AskBox
             disabled={reference === undefined || failed}
             placeholder={t('ask.placeholder')}
@@ -1120,6 +1259,7 @@ export function ButlerPanel({
                 </div>
               </section>
             </div>
+            {interceptBar}
             <AskBox
               disabled={reference === undefined || failed}
               placeholder={t('ask.placeholder2')}

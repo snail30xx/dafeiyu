@@ -42,6 +42,14 @@ export const zh = {
   'board.ignore': '忽略',
   'board.approve': '批准',
   'board.reject': '拒绝',
+  // byClaude-start 人机交互拦截条：宿主 approval/question 待交互（byClaude）
+  'intercept.approve': '等主人批准',
+  'intercept.approve.allow': '允许一次',
+  'intercept.approve.reject': '拒绝',
+  'intercept.question': '有选择题等确认',
+  'intercept.question.go': '去处理',
+  'intercept.butler': '管家会话',
+  // byClaude-end
   'tstep.received': '已接收',
   'tstep.thinking': '正在想',
   'hero.thinking': '肥鱼正在思考',
@@ -122,6 +130,14 @@ export const en: Record<DafeiyuKey, string> = {
   'board.ignore': 'Ignore',
   'board.approve': 'Approve',
   'board.reject': 'Reject',
+  // byClaude-start pending host approval / question intercept bar (byClaude)
+  'intercept.approve': 'Needs your approval',
+  'intercept.approve.allow': 'Allow once',
+  'intercept.approve.reject': 'Reject',
+  'intercept.question': 'Question waiting for you',
+  'intercept.question.go': 'Open chat',
+  'intercept.butler': 'Butler session',
+  // byClaude-end
   'tstep.received': 'Received',
   'tstep.thinking': 'Thinking',
   'hero.thinking': 'Fishy is thinking',
