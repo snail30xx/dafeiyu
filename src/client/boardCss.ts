@@ -135,11 +135,14 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .aurora .a1{width:520px;height:340px;left:38%;top:-160px;background:radial-gradient(closest-side,rgba(124,58,237,.16),transparent 70%);animation:dfy-drift 12s ease-in-out infinite}
 .dfy-root .aurora .a2{width:470px;height:320px;left:-130px;bottom:-70px;background:radial-gradient(closest-side,rgba(8,145,178,.12),transparent 70%);animation:dfy-drift2 15s ease-in-out infinite}
 .dfy-root .aurora .a3{width:380px;height:280px;right:-100px;top:32%;background:radial-gradient(closest-side,rgba(219,39,119,.10),transparent 70%);animation:dfy-drift 18s ease-in-out infinite}
-.dfy-root .view-switch{display:flex;gap:4px;padding:4px;border-radius:12px;background:rgba(15,23,42,.05);border:1px solid var(--line)}
-.dfy-root .vs-btn{padding:5px 14px;border-radius:9px;font-size:12.5px;font-weight:500;color:var(--sub);transition:.18s;display:inline-flex;align-items:center;gap:6px}
-.dfy-root .vs-btn:hover{color:var(--txt)}
-.dfy-root .vs-btn.active{background:#fff;color:var(--txt);box-shadow:0 2px 8px rgba(15,23,42,.12)}
-.dfy-root .vs-btn .ic{width:13px;height:13px}
+/* byClaude-start 三 tab 分段控件：白玻璃底（与面板卡片同族，无灰）+ 品牌青激活（byClaude） */
+.dfy-root .view-switch{display:flex;gap:3px;padding:3px;border-radius:11px;background:rgba(255,255,255,.6);border:1px solid var(--line);backdrop-filter:blur(8px)}
+.dfy-root .vs-btn{padding:5px 13px;border-radius:8px;font-size:12.5px;font-weight:500;color:var(--sub);transition:.18s;display:inline-flex;align-items:center;gap:6px;border:1px solid transparent}
+.dfy-root .vs-btn:hover{color:var(--c1);background:rgba(8,145,178,.08)}
+.dfy-root .vs-btn.active{background:linear-gradient(180deg,rgba(8,145,178,.16),rgba(124,58,237,.10));color:#0e7490;font-weight:600;border-color:rgba(8,145,178,.35);box-shadow:0 2px 10px -3px rgba(8,145,178,.35)}
+.dfy-root .vs-btn .ic{width:13px;height:13px;transition:color .18s}
+.dfy-root .vs-btn.active .ic{color:var(--c1)}
+/* byClaude-end */
 .dfy-root .top-right{margin-left:auto;display:flex;align-items:center;gap:8px}
 .dfy-root .chip{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:4px 11px;background:rgba(255,255,255,.7)}
 .dfy-root .chip-ok{color:#047857;background:rgba(5,150,105,.08);border-color:rgba(5,150,105,.3)}
@@ -318,6 +321,54 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .dfy-intercept .ix-btn.deny{border-color:rgba(15,23,42,.2);background:rgba(15,23,42,.04);color:var(--sub)}
 .dfy-root .dfy-intercept .ix-btn:disabled{opacity:.5;transform:none;cursor:default}
 /* byClaude-end */
+/* byClaude-start agent team 聊天室：成员条 + 群消息流（--tm-hue 按成员主题色）（byClaude） */
+.dfy-root .team-body{flex:1;min-height:0;display:flex}
+.dfy-root .team-panel{flex:1;min-width:0}
+/* 右侧成员栏：正常群聊的成员列表（纵排卡：头像 + 分工 + 在想点） */
+.dfy-root .team-side{flex:none;width:252px;display:flex;flex-direction:column;gap:10px;min-height:0;padding:14px;border-radius:18px;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(12px)}
+.dfy-root .team-side .team-side-scroll{flex:1;min-height:0;overflow-y:auto;display:flex;flex-direction:column;gap:7px}
+.dfy-root .team-side .tmb{display:flex;align-items:center;gap:8px;padding:8px 9px;border-radius:12px;border:1px solid transparent;background:transparent;text-align:left;transition:.15s}
+.dfy-root .team-side .tmb:hover{border-color:var(--line);background:var(--panel2);transform:translateX(-1px)}
+.dfy-root .team-side .tmb-ava{width:28px;height:28px;border-radius:9px;flex:none;display:grid;place-items:center;font-size:14px;background:rgba(15,23,42,.05)}
+.dfy-root .team-side .tmb-mid{min-width:0;display:flex;flex-direction:column;gap:1px}
+.dfy-root .team-side .tmb-name{font-size:12px;font-weight:600}
+.dfy-root .team-side .tmb-tag{font-size:10px;color:var(--faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dfy-root .team-side .tmb.busy .tmb-ava{animation:dfy-breathe 1.6s ease-in-out infinite}
+.dfy-root .team-side .tmb-dot{width:7px;height:7px;border-radius:50%;flex:none;background:var(--c1);box-shadow:0 0 8px rgba(8,145,178,.7);animation:dfy-wave 1s ease-in-out infinite;margin-left:auto}
+.dfy-root .team-side .tmb-hint{font-size:10px;color:var(--faint);padding:4px 9px}
+/* byClaude-start 成员编辑：cell 行布局 + 编辑小按钮 + 编辑浮层（byClaude） */
+.dfy-root .tmb-cell{position:relative;display:flex;align-items:center}
+.dfy-root .tmb-cell .tmb{flex:1;min-width:0}
+.dfy-root .tmb-edit{flex:none;width:22px;height:22px;border-radius:7px;display:grid;place-items:center;color:var(--faint);opacity:0;transition:.15s}
+.dfy-root .tmb-cell:hover .tmb-edit{opacity:1}
+.dfy-root .tmb-edit:hover{color:var(--c1);background:rgba(8,145,178,.1)}
+.dfy-root .tmb-cell.edited .tmb-edit{opacity:.9;color:var(--c1)}
+.dfy-root .dfy-agent-editor{position:absolute;inset:0;z-index:60;display:grid;place-items:center;background:rgba(15,23,42,.32);backdrop-filter:blur(4px);animation:dfy-rise .22s ease both}
+.dfy-root .ae-card{width:min(560px,92%);max-height:88%;overflow-y:auto;display:flex;flex-direction:column;gap:12px;padding:18px 20px;border-radius:18px;background:rgba(255,255,255,.96);border:1px solid var(--line);box-shadow:0 24px 70px -20px rgba(15,23,42,.4)}
+.dfy-root .ae-head{display:flex;align-items:center;justify-content:space-between;gap:10px}
+.dfy-root .ae-title{font-size:14px;font-weight:600}
+.dfy-root .ae-close{width:26px;height:26px;border-radius:8px;font-size:16px;color:var(--sub);display:grid;place-items:center}
+.dfy-root .ae-close:hover{background:rgba(15,23,42,.06);color:var(--txt)}
+.dfy-root .ae-field{display:flex;flex-direction:column;gap:5px}
+.dfy-root .ae-label{font-size:11.5px;font-weight:600;color:var(--sub);display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.dfy-root .ae-hint{font-style:normal;font-size:10px;font-weight:400;color:var(--faint)}
+.dfy-root .ae-field textarea{font:inherit;font-size:12.5px;line-height:1.6;padding:9px 11px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.8);resize:vertical;color:var(--txt)}
+.dfy-root .ae-field textarea:focus{outline:none;border-color:rgba(8,145,178,.5);box-shadow:0 0 0 3px rgba(8,145,178,.1)}
+.dfy-root .ae-acts{display:flex;gap:8px;justify-content:flex-end}
+/* byClaude-start 技能勾选：滚动 chip 网格，选中态品牌青（byClaude） */
+.dfy-root .ae-skills{display:flex;flex-wrap:wrap;gap:6px;max-height:180px;overflow-y:auto;padding:8px;border-radius:10px;border:1px solid var(--line);background:rgba(255,255,255,.6)}
+.dfy-root .ae-skill{font-size:11px;font-family:var(--mono);padding:4px 9px;border-radius:999px;border:1px solid var(--line);color:var(--sub);transition:.13s;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.dfy-root .ae-skill:hover{border-color:rgba(8,145,178,.45);color:var(--c1)}
+.dfy-root .ae-skill.on{border-color:rgba(8,145,178,.5);background:linear-gradient(135deg,rgba(34,211,238,.16),rgba(139,92,246,.14));color:#0e7490;font-weight:600}
+.dfy-root .ae-btn{padding:7px 16px;border-radius:9px;font-size:12.5px;font-weight:600;border:1px solid var(--line);color:var(--sub);transition:.15s}
+.dfy-root .ae-btn:hover{border-color:rgba(8,145,178,.4);color:var(--c1)}
+.dfy-root .ae-btn.primary{border-color:transparent;background:linear-gradient(135deg,#22d3ee,#8b5cf6);color:#fff;box-shadow:0 4px 14px rgba(8,145,178,.35)}
+.dfy-root .ae-btn.primary:hover{transform:translateY(-1px);color:#fff}
+.dfy-root .team-msgs .msg.tm{align-items:flex-start}
+.dfy-root .team-msgs .msg.tm .ava{border-radius:10px;font-size:15px;border:1px solid color-mix(in srgb,var(--tm-hue,#0e7490) 45%,transparent);background:#fff;box-shadow:0 0 10px color-mix(in srgb,var(--tm-hue,#0e7490) 18%,transparent)}
+.dfy-root .team-msgs .tm-col{min-width:0;max-width:85%;display:flex;flex-direction:column;gap:3px}
+.dfy-root .team-msgs .tm-name{font-size:10.5px;font-weight:600;color:var(--tm-hue,var(--c1));padding-left:2px}
+.dfy-root .team-msgs .tm-err{border:1px dashed rgba(220,38,38,.4);color:#b91c1c;font-size:12px}
 .dfy-root .statusbar{display:flex;align-items:center;gap:14px;padding:8px 6px 2px;font-size:11px;color:var(--faint);flex:none;flex-wrap:wrap}
 .dfy-root .statusbar .sti{display:flex;align-items:center;gap:6px}
 .dfy-root .statusbar .sti.ok{color:var(--ok)}
@@ -382,7 +433,7 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
   .dfy-root .wb .work-stage{display:none}
 }
 @container (max-width:920px){.dfy-root #view-workbench, .dfy-root #view-console{grid-template-columns:1fr}.dfy-root .chat-body .work-stage{display:none}}
-@container (max-width:760px){.dfy-root .v1-work, .dfy-root .cs-body{flex-direction:column;overflow-y:auto}.dfy-root .work-chat, .dfy-root .work-tasks, .dfy-root .chat-panel, .dfy-root .flow-panel{flex:none}.dfy-root .work-chat{min-height:380px}}
+@container (max-width:760px){.dfy-root .v1-work, .dfy-root .cs-body{flex-direction:column;overflow-y:auto}.dfy-root .work-chat, .dfy-root .work-tasks, .dfy-root .chat-panel, .dfy-root .flow-panel{flex:none}.dfy-root .work-chat{min-height:380px}.dfy-root .team-side{width:auto;flex-direction:row;flex-wrap:wrap;overflow-y:visible}.dfy-root .team-side .team-side-scroll{flex-direction:row;flex-wrap:wrap;overflow-y:visible}.dfy-root .team-side .tmb-tag{display:none}}
 /* byClaude-start 矮屏统一改「内容区内部滚」（与 760 容器断点同构）：整体滚动会把
    输入条卷进折叠区推出面板外（实测工作台/控制台 bottom 均超容器 500px+），
    输入条必须常驻底部（byClaude） */

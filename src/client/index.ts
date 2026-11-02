@@ -19,8 +19,8 @@ import { FatfishMoreRow, type FatfishMoreInjected } from './FatfishMoreRow.js'
 import { ButlerPanel, type ButlerInjected, type ModelCatalogLike, type ModelSelectionLike } from './ButlerPanel.js'
 import { ButlerChatHost } from './ButlerChatHost.js'
 import { FatfishIcon } from './FatfishIcon.js'
-import { BUTLER_TITLE, isButlerHomePath } from './constants.js'
-import { installHomeFilter, rawWorkspaceSnapshot, removeHiddenButlerStyle, setHiddenButlerSession } from './homeFilter.js'
+import { BUTLER_TITLE, TEAM_AGENTS, isButlerHomePath, isTeamHomePath, teamSessionTitle } from './constants.js'
+import { installHomeFilter, rawWorkspaceSnapshot, removeHiddenButlerStyle, setHiddenButlerSession, addHiddenTeamSession } from './homeFilter.js'
 import { NS, zh, en, type DafeiyuKey } from './locales.js'
 
 declare module '@deepseek-ai/dsh-client-ui-slots' {
@@ -41,6 +41,8 @@ declare module '@deepseek-ai/dsh-api-session-controller/client' {
   interface SessionReferenceSourceMap {
     /** 大肥鱼管家面板对管家会话的持有来源。 */
     dafeiyuButler: unknown
+    /** 大肥鱼聊天室对各成员会话的持有来源。 */
+    dafeiyuTeam: unknown
   }
 }
 
@@ -146,6 +148,104 @@ async function doEnsureButlerSession(sessions: ISessions, workspaces: IWorkspace
   return created
 }
 
+// byClaude-start agent team 聊天室：成员会话工厂（三级定位，与管家同模式但按成员目录）（byClaude）
+/** team 成员目录归属判定：cwd 在 team 根下且以 /<agentId> 结尾。 */
+function isAgentHomePath(path: string | undefined, agentId: string): boolean {
+  if (path === undefined) return false
+  const norm = path.replaceAll('\\', '/').toLowerCase()
+  return isTeamHomePath(norm) && norm.endsWith('/' + agentId)
+}
+
+/** 能当某成员会话的行：cwd 是该成员目录且未归档。 */
+function usableAsTeamAgent(row: SessionSummary | undefined, archivedIds: ReadonlySet<string>, agentId: string): row is SessionSummary {
+  return row !== undefined && isAgentHomePath(row.cwd, agentId) && !archivedIds.has(row.id)
+}
+
+/** 等某成员工作区出现在全量快照（host 播种是异步的），最多 8 秒。 */
+async function waitForAgentHome(workspaces: IWorkspaces, agentId: string): Promise<WorkspaceView | undefined> {
+  const find = (): WorkspaceView | undefined =>
+    rawWorkspaceSnapshot().items.find(ws => isAgentHomePath(ws.path, agentId))
+  const immediate = find()
+  if (immediate !== undefined) return immediate
+  return await new Promise(resolve => {
+    const settle = (): void => {
+      cleanup()
+      resolve(find())
+    }
+    const check = (): void => {
+      if (find() !== undefined) settle()
+    }
+    const unsubscribe = workspaces.list.subscribe(() => { check() })
+    const timer = window.setTimeout(() => { settle() }, 8000)
+    function cleanup(): void {
+      unsubscribe()
+      window.clearTimeout(timer)
+    }
+    check()
+  })
+}
+
+/** 面板打开期间已确认的成员会话 id 缓存：避免每次发言都重走三级定位。 */
+const teamSessionCache = new Map<string, SessionId>()
+
+/**
+ * 定位/新建聊天室成员会话：本地记忆 id → 成员目录里按 cwd 匹配 → 成员工作区新建改名。
+ * 侧边栏隐身随确认同步登记。
+ * @param sessions - 会话服务。
+ * @param workspaces - 工作区服务。
+ * @param agentId - 成员 id（TEAM_AGENTS）。
+ * @returns 成员会话 id；工作区未就绪时抛错。
+ */
+async function doEnsureTeamSession(sessions: ISessions, workspaces: IWorkspaces, agentId: string): Promise<SessionId> {
+  if (!TEAM_AGENTS.some(agent => agent.id === agentId)) throw new Error(`dafeiyu: unknown team agent ${agentId}`)
+  const home = await waitForAgentHome(workspaces, agentId)
+  if (home === undefined) throw new Error(`dafeiyu team agent home not ready: ${agentId}`)
+  await waitForSessionListReady(sessions)
+  const cached = teamSessionCache.get(agentId)
+  const archived = new Set(rawWorkspaceSnapshot().archivedSessionIds)
+  const snapshot = sessions.list.getSnapshot()
+  if (cached !== undefined) {
+    const remembered = snapshot.byId[cached]
+    if (usableAsTeamAgent(remembered, archived, agentId)) return remembered.id
+    teamSessionCache.delete(agentId)
+  }
+  const stored = window.localStorage.getItem(`dafeiyu.team.${agentId}`)
+  if (stored !== null) {
+    const remembered = snapshot.byId[stored as SessionId]
+    if (usableAsTeamAgent(remembered, archived, agentId)) {
+      teamSessionCache.set(agentId, remembered.id)
+      return remembered.id
+    }
+    window.localStorage.removeItem(`dafeiyu.team.${agentId}`)
+  }
+  const existing = snapshot.ids
+    .map(id => snapshot.byId[id])
+    .find(row => usableAsTeamAgent(row, archived, agentId))
+  if (existing !== undefined) {
+    window.localStorage.setItem(`dafeiyu.team.${agentId}`, existing.id)
+    teamSessionCache.set(agentId, existing.id)
+    return existing.id
+  }
+  const created = await sessions.create({ workspaceId: home.workspaceId })
+  await sessions.using(created, { source: 'dafeiyuTeam' }, reference =>
+    reference.binding.session.rename(teamSessionTitle(agentId))).catch(() => undefined)
+  window.localStorage.setItem(`dafeiyu.team.${agentId}`, created)
+  teamSessionCache.set(agentId, created)
+  return created
+}
+
+/** 成员会话定位的单飞兜底（同成员并发首聊只定位一次）。 */
+const teamInflight = new Map<string, Promise<SessionId>>()
+
+/** 单飞包装：定位/新建成员会话并登记侧边栏隐身。 */
+async function ensureTeamSession(sessions: ISessions, workspaces: IWorkspaces, agentId: string): Promise<SessionId> {
+  const run = (): Promise<SessionId> => doEnsureTeamSession(sessions, workspaces, agentId)
+  const id = await (teamInflight.get(agentId) ?? run().finally(() => { teamInflight.delete(agentId) }))
+  addHiddenTeamSession(id)
+  return id
+}
+// byClaude-end
+
 /** 单飞 promise：Web Locks 不可用时的进程内互斥兜底。 */
 let inflightEnsure: Promise<SessionId> | undefined
 
@@ -181,6 +281,14 @@ export function apply(ctx: Context): void {
   }, 'dafeiyu: butler-home projection')
   const t = ctx.locale.bind(NS)
   const sessions = ctx.get('sessions') as unknown as ISessions
+  // byClaude-start 系统技能目录：官方 skills/list Remote（session 定址），给成员编辑器勾选（byClaude）
+  const skillsRemote = (ctx as unknown as {
+    get?: (name: string) => { list?: (request: { sessionId: SessionId }) => Promise<
+      { ok: true; value: { skills: readonly { name: string; description?: string }[] } } |
+      { ok: false; error: { code: string; message: string } }
+    > } | undefined
+  }).get?.('remote.skills')
+  // byClaude-end
 
   // byClaude-start 模型目录/选择面：经 session manager 的 remote namespace（公开 ISessions 未暴露，运行时探测；不可用则面板退化为无选择器）（byClaude）
   const models: ButlerInjected['models'] = (() => {
@@ -233,7 +341,31 @@ export function apply(ctx: Context): void {
       const id = await ensureButlerSession(sessions, ctx.workspaces)
       return sessions.retain(id, { source: 'dafeiyuButler' })
     },
+    // byClaude-start 聊天室成员会话引用：面板持有期间 retain，上下文随成员工作区天然隔离（byClaude）
+    acquireTeam: async (agentId: string): Promise<SessionReference> => {
+      const id = await ensureTeamSession(sessions, ctx.workspaces, agentId)
+      return sessions.retain(id, { source: 'dafeiyuTeam' })
+    },
+    // byClaude-end
     openSession: sessionId => { ctx.uiWorkspace.openSession(sessionId) },
+    // byClaude-start 系统技能目录：借一个已就绪会话读 user-invocable 技能；失败返回 null 退回手填（byClaude）
+    listSkills: async (sessionId: SessionId): Promise<readonly { name: string; description?: string }[] | null> => {
+      if (skillsRemote?.list === undefined) return null
+      try {
+        return await sessions.using(sessionId, { source: 'dafeiyuTeam' }, async (reference) => {
+          const state = (reference.binding.session as unknown as { getSnapshot: () => { openState?: string } }).getSnapshot()
+          if (state.openState !== undefined && state.openState !== 'open') return null
+          const list = skillsRemote.list
+          if (list === undefined) return null
+          const result = await list({ sessionId })
+          if (!result.ok) return null
+          return result.value.skills
+        })
+      } catch {
+        return null
+      }
+    },
+    // byClaude-end
   }
 
   ctx.effect(() => ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({

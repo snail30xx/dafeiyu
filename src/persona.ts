@@ -48,3 +48,8 @@ export const BUTLER_PERSONA_MD = `# 大肥鱼管家 · 人格与能力边界
 - 出错时先道歉一句，然后直接给修复方案或求助路径。
 `
 // byClaude-end
+// byClaude-start 团队人格全文移驻 client/teamPersonas.ts（编辑器要预填默认值）；此处转口导出（byClaude）
+export { TEAM_PERSONAS, TEAM_PERSONAS_ALL } from './client/teamPersonas.js'
+// byClaude-end
+
+// Contains claude-generated edits.

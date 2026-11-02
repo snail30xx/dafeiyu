@@ -24,7 +24,9 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { BUTLER_TITLE, isButlerHomePath } from './constants.js'
+import { BUTLER_TITLE, isButlerHomePath, TEAM_AGENTS, TEAM_DEFAULT_AGENT, TEAM_SESSION_PREFIX } from './constants.js'
+import { TEAM_PERSONAS_ALL } from './teamPersonas.js'
+import type { TeamAgentDef } from './constants.js'
 import { BOARD_CSS } from './boardCss.js'
 import { SVG_DEFS } from './boardDefs.js'
 import type { DafeiyuKey } from './locales.js'
@@ -43,6 +45,12 @@ export interface ButlerInjected {
   }
   /** 取得管家会话引用：找不到就新建并改名，返回已 retain 的引用（面板负责 release）。 */
   readonly acquire: () => Promise<SessionReference>
+  // byClaude-start agent team 聊天室：成员会话引用工厂（独立工作区 = 独立上下文）（byClaude）
+  readonly acquireTeam: (agentId: string) => Promise<SessionReference>
+  // byClaude-end
+  // byClaude-start 系统技能目录（官方 skills/list Remote）；null = 不可用，编辑器退回手填（byClaude）
+  readonly listSkills: (sessionId: SessionId) => Promise<readonly { name: string; description?: string }[] | null>
+  // byClaude-end
   /** 跳转到指定对话（切到官方会话视图）。 */
   readonly openSession: (sessionId: SessionId) => void
   /** 模型目录与选择面；null = 宿主运行时不支持，面板退化为无选择器。 */
@@ -109,6 +117,9 @@ export interface ChatDigestRow {
   /** 流式进行中的管家行（跟随 assistant/live-chunk 增量）。 */
   readonly streaming?: boolean
 }
+
+/** 聊天室输入条的空模型选择回调（该输入条不显示模型选择器）。 */
+const noopModelSelect = (): void => {}
 
 /** 空总结的模块级常量：useSyncExternalStore 的 getSnapshot 必须返回稳定引用。 */
 const EMPTY_DIGEST: readonly ChatDigestRow[] = []
@@ -238,6 +249,143 @@ function timeAgo(updatedAt: number, t: (key: DafeiyuKey) => string): string {
   if (hours < 24) return t('time.hours').replace('{n}', String(hours))
   return t('time.days').replace('{n}', String(Math.floor(hours / 24)))
 }
+
+// byClaude-start agent team 聊天室：群消息类型、@ 解析、共享上下文拼接与回复采集（byClaude）
+/** 聊天室一行消息：from = 'me'（主人）或成员 id；pending = 该成员正在想。 */
+export interface TeamMessage {
+  readonly id: number
+  readonly from: string
+  readonly text: string
+  readonly time: number
+  readonly pending?: boolean
+  readonly error?: boolean
+}
+
+/** 聊天室历史持久化键与容量上限（localStorage；pending/error 态不落盘）。 */
+const TEAM_LOG_KEY = 'dafeiyu.team.log'
+const TEAM_LOG_CAP = 300
+
+function readTeamLog(): readonly TeamMessage[] {
+  try {
+    const raw = window.localStorage.getItem(TEAM_LOG_KEY)
+    if (raw === null) return []
+    const parsed: unknown = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter((row): row is TeamMessage => {
+      if (row === null || typeof row !== 'object') return false
+      const m = row as Partial<TeamMessage>
+      return typeof m.id === 'number' && typeof m.from === 'string' && typeof m.text === 'string'
+    }).slice(-TEAM_LOG_CAP)
+  } catch {
+    return []
+  }
+}
+
+function persistTeamLog(rows: readonly TeamMessage[]): void {
+  try {
+    const durable = rows.filter(row => row.pending !== true && row.error !== true).slice(-TEAM_LOG_CAP)
+    window.localStorage.setItem(TEAM_LOG_KEY, JSON.stringify(durable))
+  } catch { /* 存储满/隐私模式可忽略 */ }
+}
+
+// byClaude-start 成员人格/技能的本地覆盖：localStorage 持久，派发时注入 prompt（byClaude）
+/** 一名成员的主人编辑版配置：留空字段 = 用内置人格文件。 */
+export interface TeamOverride {
+  readonly persona: string
+  readonly skills: string
+}
+
+const TEAM_OVERRIDE_KEY = 'dafeiyu.team.overrides'
+
+function readTeamOverrides(): Record<string, TeamOverride> {
+  try {
+    const raw = window.localStorage.getItem(TEAM_OVERRIDE_KEY)
+    if (raw === null) return {}
+    const parsed: unknown = JSON.parse(raw)
+    if (parsed === null || typeof parsed !== 'object') return {}
+    const out: Record<string, TeamOverride> = {}
+    for (const [id, value] of Object.entries(parsed as Record<string, unknown>)) {
+      if (value === null || typeof value !== 'object') continue
+      const v = value as Partial<TeamOverride>
+      if (typeof v.persona === 'string' && typeof v.skills === 'string') out[id] = { persona: v.persona, skills: v.skills }
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function persistTeamOverrides(rows: Record<string, TeamOverride>): void {
+  try { window.localStorage.setItem(TEAM_OVERRIDE_KEY, JSON.stringify(rows)) } catch { /* 可忽略 */ }
+}
+// byClaude-end
+
+/** 成员 id → 定义（未知 id 容错为肥鱼色占位）。 */
+function teamAgentOf(id: string): TeamAgentDef | undefined {
+  return TEAM_AGENTS.find(agent => agent.id === id)
+}
+
+/**
+ * 解析消息里的 @提及：支持「@肥鱼 / @码仔 / @探长 / @笔杆」成员名全匹配。
+ * 谁都没 @ 到就发给默认成员（肥鱼）。
+ */
+function parseTeamMentions(text: string): string[] {
+  const hits: string[] = []
+  for (const agent of TEAM_AGENTS) {
+    if (text.includes(`@${agent.name}`) && !hits.includes(agent.id)) hits.push(agent.id)
+  }
+  return hits.length === 0 ? [TEAM_DEFAULT_AGENT] : hits
+}
+
+/**
+ * 共享上下文：把聊天室最近若干条消息拼成文字记录发给成员会话——
+ * 成员上下文各自独立（各自的 AGENTS.md 与历史），群聊窗口内容靠这份拼接共享。
+ */
+function teamContextTranscript(rows: readonly TeamMessage[], windowSize: number): string {
+  const slice = rows.filter(row => row.pending !== true && row.error !== true).slice(-windowSize)
+  if (slice.length === 0) return ''
+  return slice.map(row => {
+    const who = row.from === 'me' ? '主人' : (teamAgentOf(row.from)?.name ?? row.from)
+    return `[${who}] ${row.text}`
+  }).join('\n')
+}
+
+/** events 快照里是否还有流式输出（尾部 transient 存在 assistant/live-chunk）。 */
+function teamStreamingActive(snapshot: unknown): boolean {
+  const view = snapshot as { readonly entries?: readonly unknown[] } | undefined
+  const entries = view?.entries ?? []
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as { readonly type?: unknown } | undefined
+    if (entry?.type !== 'transient') break
+    return true
+  }
+  return false
+}
+
+/**
+ * 取 since 之后最后一条完整 assistant 回复全文（聊天室不做 480 字截断，气泡可滚动）。
+ * 与 selectRecentTurns 同构，但保留完整文本且按时间过滤。
+ */
+function lastAssistantReplySince(snapshot: unknown, since: number): string | undefined {
+  const view = snapshot as { readonly entries?: readonly unknown[] } | undefined
+  const entries = view?.entries ?? []
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const entry = entries[i] as {
+      readonly type?: unknown
+      readonly event?: { readonly type?: unknown; readonly time?: number
+        readonly data?: { readonly message?: { readonly content?: readonly { readonly type?: unknown; readonly text?: unknown }[] } } }
+    } | undefined
+    if (entry?.type !== 'event') continue
+    if (entry.event?.type !== 'assistant/message') continue
+    if ((entry.event.time ?? 0) <= since) continue
+    const text = (entry.event.data?.message?.content ?? [])
+      .filter(block => block.type === 'text' && typeof block.text === 'string')
+      .map(block => block.text as string).join('').trim()
+    if (text !== '') return text
+  }
+  return undefined
+}
+// byClaude-end
 
 /** 按本地小时推问候语 key（5-11 早、11-18 午、其余晚）。 */
 function greetingKey(date: Date): DafeiyuKey {
@@ -553,7 +701,6 @@ function FlowStep({ row, stage, onOpen, onApprove, onReject, t }: {
         <div className="s-h">
           <b>{row.displayTitle}</b>
           <span className="s-tag">{live ? t('board.running') : wait ? t('stage.pending') : t('stage.done')}</span>
-          <span className="mono">{timeAgo(row.updatedAt, t)}</span>
         </div>
         <p className="s-p">{project !== '' ? project : row.displayTitle}</p>
         {live && <div className="s-bar indet" role="progressbar" aria-label={row.displayTitle}><i /></div>}
@@ -570,7 +717,7 @@ function FlowStep({ row, stage, onOpen, onApprove, onReject, t }: {
 
 // byClaude-start
 /** 自绘输入条（设计稿 .ask-box）：Enter 直排管家会话队列；工具行 = 模型选择 + 思考深度 + 发送。 */
-function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect, onSubmit, onFocusChange }: {
+function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect, onSubmit, onFocusChange, insert }: {
   disabled: boolean
   placeholder: string
   sendLabel: string
@@ -579,11 +726,21 @@ function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect
   onSelect: (next: ModelSelectionLike) => void
   onSubmit: (text: string) => void
   onFocusChange: (attentive: boolean) => void
+  /** 外部插入信号（seq 递增触发一次追加，如聊天室点成员插「@名字」）；不传则无此行为。 */
+  insert?: { readonly text: string; readonly seq: number } | undefined
 }) {
   const [draft, setDraft] = useState('')
   const [menu, setMenu] = useState<'model' | 'effort' | null>(null)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const boxRef = useRef<HTMLFormElement | null>(null)
+  // byClaude-start 外部插入：seq 变化时把文本追加到草稿末尾并聚焦（byClaude）
+  const insertSeq = insert?.seq ?? 0
+  useEffect(() => {
+    if (insertSeq === 0 || insert === undefined) return
+    setDraft(prev => prev === '' ? insert.text : prev.replace(/\s+$/, '') + ' ' + insert.text)
+    inputRef.current?.focus()
+  }, [insertSeq])
+  // byClaude-end
   const submit = () => {
     const text = draft.trim()
     if (text === '' || disabled) return
@@ -690,7 +847,7 @@ function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect
  * @returns 工作台/控制台双视图 + 自绘输入条 + 官方完整对话浮层。
  */
 export function ButlerPanel({
-  useSessionList, useWorkspaceList, useSessionStatus, acquire, openSession, models, t, renderSlot, SessionProvider,
+  useSessionList, useWorkspaceList, useSessionStatus, acquire, acquireTeam, openSession, models, listSkills, t, renderSlot, SessionProvider,
 }: ButlerPanelProps) {
   const [reference, setReference] = useState<SessionReference | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -719,7 +876,7 @@ export function ButlerPanel({
   const [doneMap, setDoneMap] = useState<Record<string, true>>(() => readDoneMap())
   const [ignoreMap, setIgnoreMap] = useState<Record<string, true>>(() => readIgnoreMap())
   const [detailOpen, setDetailOpen] = useState(false)
-  const [view, setView] = useState<'workbench' | 'console'>('console')
+  const [view, setView] = useState<'workbench' | 'console' | 'team'>('console')
   // 生命感状态：attentive = 用户聚焦输入条（她在听）；bouncing = 一次性小跳。
   const [attentive, setAttentive] = useState(false)
   const [bouncing, setBouncing] = useState(false)
@@ -863,7 +1020,8 @@ export function ButlerPanel({
       .filter((row): row is SessionSummary =>
         row !== undefined && !row.blank && row.origin !== 'subagent'
         && row.id !== butlerId && !archived.has(row.id)
-        && !isButlerHomePath(row.cwd ?? '') && row.title !== BUTLER_TITLE)
+        && !isButlerHomePath(row.cwd ?? '') && row.title !== BUTLER_TITLE
+        && (row.title ?? '').startsWith(TEAM_SESSION_PREFIX) === false)
     const byRecent = (left: SessionSummary, right: SessionSummary) => right.updatedAt - left.updatedAt
     // 被忽略的会话从看板整个消失（不算完成，也不进任何分组）。
     const visible = rows.filter(row => ignoreMap[row.id] === undefined)
@@ -998,6 +1156,199 @@ export function ButlerPanel({
       })
   }, [reference])
 
+  // byClaude-start agent team 聊天室：群消息状态、成员会话引用池、@派发与回复采集（byClaude）
+  const [teamLog, setTeamLog] = useState<readonly TeamMessage[]>(() => readTeamLog())
+  const teamLogRef = useRef(teamLog)
+  teamLogRef.current = teamLog
+  const teamRefs = useRef(new Map<string, SessionReference>())
+  const teamNextId = useRef(1)
+  const teamScrollRef = useRef<HTMLDivElement | null>(null)
+  const [teamInsert, setTeamInsert] = useState<{ readonly text: string; readonly seq: number } | undefined>(undefined)
+  const teamInsertSeq = useRef(0)
+  // byClaude-start 成员编辑：本地人格/技能覆盖 + 编辑浮层状态（byClaude）
+  const [teamOverrides, setTeamOverrides] = useState<Record<string, TeamOverride>>(() => readTeamOverrides())
+  const teamOverridesRef = useRef(teamOverrides)
+  teamOverridesRef.current = teamOverrides
+  const [editingAgent, setEditingAgent] = useState<TeamAgentDef | null>(null)
+  const [draftPersona, setDraftPersona] = useState('')
+  const [draftSkills, setDraftSkills] = useState('')
+  // byClaude-start 技能目录：打开编辑器时拉一次（管家会话就绪为前提）；勾选集 ↔ 逗号串互转（byClaude）
+  const [skillOptions, setSkillOptions] = useState<readonly { name: string; description?: string }[] | null>(null)
+  useEffect(() => {
+    if (editingAgent === null || reference === undefined) { setSkillOptions(null); return }
+    let alive = true
+    setSkillOptions(null)
+    void listSkills(reference.sessionId).then(skills => {
+      if (alive) setSkillOptions(skills)
+    }).catch(() => { if (alive) setSkillOptions(null) })
+    return () => { alive = false }
+  }, [editingAgent, reference, listSkills])
+  const draftSkillList = useMemo(
+    () => draftSkills.split(/[,\n]/).map(part => part.trim()).filter(part => part !== ''),
+    [draftSkills],
+  )
+  const toggleSkill = useCallback((name: string): void => {
+    setDraftSkills(prev => {
+      const set = new Set(prev.split(/[,\n]/).map(p => p.trim()).filter(p => p !== ''))
+      if (set.has(name)) set.delete(name)
+      else set.add(name)
+      return [...set].join(', ')
+    })
+  }, [])
+  // byClaude-end
+  const openAgentEditor = useCallback((agent: TeamAgentDef): void => {
+    const saved = teamOverridesRef.current[agent.id]
+    // 预填内置人格全文：主人直接在默认值上改，而不是面对空框猜格式。
+    setDraftPersona(saved?.persona ?? TEAM_PERSONAS_ALL[agent.id] ?? '')
+    setDraftSkills(saved?.skills ?? '')
+    setEditingAgent(agent)
+  }, [])
+  const saveAgentOverride = useCallback((): void => {
+    const agent = editingAgent
+    if (agent === null) return
+    setTeamOverrides(prev => {
+      const next = { ...prev }
+      const persona = draftPersona.trim()
+      const skills = draftSkills.trim()
+      const unchanged = persona === (TEAM_PERSONAS_ALL[agent.id] ?? '').trim() && skills === ''
+      if (unchanged) delete next[agent.id]
+      else next[agent.id] = { persona, skills }
+      persistTeamOverrides(next)
+      return next
+    })
+    setEditingAgent(null)
+    toast(t('team.edit.saved'))
+  }, [editingAgent, draftPersona, draftSkills, toast, t])
+  const resetAgentOverride = useCallback((): void => {
+    const agent = editingAgent
+    if (agent === null) return
+    setTeamOverrides(prev => {
+      const next = { ...prev }
+      delete next[agent.id]
+      persistTeamOverrides(next)
+      return next
+    })
+    setEditingAgent(null)
+    toast(t('team.edit.resetDone'))
+  }, [editingAgent, toast, t])
+  // byClaude-end
+
+  // 面板卸载时释放全部成员引用（引用池生命周期 = 面板挂载期）。
+  useEffect(() => () => {
+    for (const ref of teamRefs.current.values()) ref.release()
+    teamRefs.current.clear()
+  }, [])
+
+  // 群消息落地（持久化排除 pending/error 态）与 pending 行更新。
+  const appendTeamLog = useCallback((row: TeamMessage): void => {
+    setTeamLog(prev => {
+      const next = [...prev, row]
+      persistTeamLog(next)
+      return next
+    })
+  }, [])
+  const patchTeamLog = useCallback((id: number, patch: Partial<TeamMessage>): void => {
+    setTeamLog(prev => {
+      const next = prev.map(row => row.id === id ? { ...row, ...patch, pending: patch.pending ?? false } : row)
+      persistTeamLog(next)
+      return next
+    })
+  }, [])
+
+  // 成员会话引用：懒 acquire + 进程内缓存（acquire 幂等 retain 计数，重复调用无害）。
+  const acquireTeamRef = useCallback(async (agentId: string): Promise<SessionReference> => {
+    const cached = teamRefs.current.get(agentId)
+    if (cached !== undefined) return cached
+    const ref = await acquireTeam(agentId)
+    teamRefs.current.set(agentId, ref)
+    return ref
+  }, [acquireTeam])
+
+  /**
+   * 订阅成员事件流等本轮回复：出现 since 之后的完整 assistant 行且流式已停 → 收文；
+   * 120s 兜底超时标失败。unsubscribe 与超时 timer 由面板卸载与完成路径双清。
+   */
+  const watchTeamReply = useCallback((ref: SessionReference, pid: number, since: number, done: () => void): void => {
+    const events = ref.binding.eventSource
+    let timer = 0
+    let unsubscribe: () => void = () => {}
+    const finish = (patch: Partial<TeamMessage>): void => {
+      window.clearTimeout(timer)
+      unsubscribe()
+      patchTeamLog(pid, patch)
+      done()
+    }
+    const check = (): void => {
+      const snapshot = events.getSnapshot()
+      if (teamStreamingActive(snapshot)) return
+      const reply = lastAssistantReplySince(snapshot, since)
+      if (reply !== undefined) finish({ text: reply })
+    }
+    unsubscribe = events.subscribe(() => { check() })
+    timer = window.setTimeout(() => { finish({ error: true, text: '' }) }, 120000)
+    check()
+  }, [patchTeamLog])
+
+  /**
+   * 给一个成员派话：拼接群聊共享上下文 + 主人 @ 语，走该成员独立会话；
+   * 占位行先行，回复由 watchTeamReply 收尾。
+   */
+  const dispatchTeamAgent = useCallback(async (agentId: string, text: string, pid: number): Promise<void> => {
+    let ref: SessionReference
+    try {
+      ref = await acquireTeamRef(agentId)
+    } catch {
+      patchTeamLog(pid, { error: true, text: t('team.error.session') })
+      return
+    }
+    const history = teamContextTranscript(teamLogRef.current, 24)
+    // 主人编辑版角色/技能覆盖：存在时置于 prompt 首位，优先级高于工作区 AGENTS.md。
+    const override = teamOverridesRef.current[agentId]
+    const overrideHead = override === undefined ? '' : (
+      `${t('team.ovr.head')}\n${override.persona}\n${t('team.ovr.skills')}\n${override.skills}\n\n`
+    )
+    const prompt = overrideHead + (history === ''
+      ? `${t('team.ctx.head')}\n\n${t('team.ctx.at')}${text}`
+      : `${t('team.ctx.head')}\n${history}\n\n${t('team.ctx.at')}${text}`)
+    const since = Date.now()
+    const session = ref.binding.session
+    const submission = session.beginSubmission({ mode: 'queue', text: prompt, attachments: [] })
+    try {
+      await session.prompt([{ type: 'text', text: prompt }], 'queue', undefined, submission.requestId)
+    } catch {
+      submission.abandon()
+      patchTeamLog(pid, { error: true, text: t('team.error.send') })
+      return
+    }
+    watchTeamReply(ref, pid, since, () => undefined)
+  }, [acquireTeamRef, patchTeamLog, watchTeamReply, t])
+
+  /** 聊天室发送：主人消息入群，@到谁派谁（没人 @ 到就喊默认成员）。 */
+  const sendTeam = useCallback((raw: string): void => {
+    const text = raw.trim()
+    if (text === '') return
+    const mentions = parseTeamMentions(text)
+    appendTeamLog({ id: teamNextId.current++, from: 'me', text, time: Date.now() })
+    for (const agentId of mentions) {
+      const pid = teamNextId.current++
+      appendTeamLog({ id: pid, from: agentId, text: '', time: Date.now(), pending: true })
+      void dispatchTeamAgent(agentId, text, pid)
+    }
+  }, [appendTeamLog, dispatchTeamAgent])
+
+  // 群消息更新后滚到底部。
+  useEffect(() => {
+    const node = teamScrollRef.current
+    if (node !== null) node.scrollTop = node.scrollHeight
+  }, [teamLog])
+
+  // 成员条点击：把「@名字」插进输入条。
+  const onRosterPick = useCallback((agent: TeamAgentDef): void => {
+    teamInsertSeq.current += 1
+    setTeamInsert({ text: `@${agent.name} `, seq: teamInsertSeq.current })
+  }, [])
+  // byClaude-end
+
   // 舞台 3D 倾斜（设计稿 tilt）：指针跟随 ±8°/±6°，离开回正；触屏与 reduced-motion 不启用。
   const tiltEnabled = useMemo(() =>
     typeof window.matchMedia === 'function'
@@ -1066,6 +1417,12 @@ export function ButlerPanel({
             aria-pressed={view === 'console'} onClick={() => { setView('console') }}>
             <Icon n="activity" className="ic sm" />{t('view.console')}
           </button>
+          {/* byClaude-start 聊天室第三视图入口（byClaude） */}
+          <button type="button" className={view === 'team' ? 'vs-btn active' : 'vs-btn'}
+            aria-pressed={view === 'team'} onClick={() => { setView('team') }}>
+            <Icon n="bot" className="ic sm" />{t('view.team')}
+          </button>
+          {/* byClaude-end */}
         </nav>
         <span className="chip chip-ok">
           <span className={`dot ${moodDot}`} aria-hidden="true" />{moodText}
@@ -1196,7 +1553,7 @@ export function ButlerPanel({
           </div>
           </main>
         </section>
-      ) : (
+      ) : view === 'console' ? (
         <section id="view-console" className="view cs" aria-label={t('view.console')}>
           <main className="cs-main">
             <div
@@ -1215,10 +1572,12 @@ export function ButlerPanel({
                 <div className="hero-label"><Icon n="sparkles" className="ic xs" />{running ? t('hero.thinking') : t('hero.idle')}</div>
                 <div className="thought"><span className="mono">{thought}</span><span className="caret" aria-hidden="true" /></div>
               </div>
-              <div className="hero-timer">
-                <div className="t mono">{timeAgo(board.ongoing.at(0)?.updatedAt ?? Date.now(), t)}</div>
-                <small>{running ? t('hero.runTime') : t('hero.lastActive')}</small>
-              </div>
+              {board.ongoing.length > 0 && (
+                <div className="hero-timer">
+                  <div className="t mono">{timeAgo(board.ongoing.at(0)?.updatedAt ?? Date.now(), t)}</div>
+                  <small>{running ? t('hero.runTime') : t('hero.lastActive')}</small>
+                </div>
+              )}
             </div>
             <div className="cs-body">
               <section className="chat-panel" aria-label={t('panel.chat')}>
@@ -1272,7 +1631,137 @@ export function ButlerPanel({
             />
           </main>
         </section>
+      ) : (
+        /* byClaude-start agent team 聊天室视图：群消息流 + 右侧成员栏 + 输入条（byClaude） */
+        <section id="view-team" className="view cs" aria-label={t('view.team')}>
+          <main className="cs-main">
+            <div className="cs-body team-body">
+              <section className="chat-panel team-panel" aria-label={t('view.team')}>
+                <div className="panel-h">
+                  <Icon n="bot" className="ic sm" />{t('view.team')} · {t('team.members').replace('{n}', String(TEAM_AGENTS.length))}
+                </div>
+                <div className="msgs team-msgs" ref={teamScrollRef}>
+                  {teamLog.length === 0 && <div className="dfy-empty-row">{t('team.empty')}</div>}
+                  {teamLog.map(message => message.from === 'me'
+                    ? (
+                      <div className="msg user" key={message.id}>
+                        <div className="ava" aria-hidden="true">
+                          {userAvatar !== null ? <img className="dfy-user-avatar" src={userAvatar} alt="" /> : '我'}
+                        </div>
+                        <div className="bubble">{message.text}</div>
+                      </div>
+                    )
+                    : (() => {
+                      const agent = teamAgentOf(message.from)
+                      return (
+                        <div className="msg ai tm" key={message.id}
+                          style={{ '--tm-hue': agent?.hue ?? '#0e7490' } as React.CSSProperties}>
+                          <div className="ava" aria-hidden="true">{agent?.emoji ?? '🐟'}</div>
+                          <div className="tm-col">
+                            <div className="tm-name">{agent?.name ?? message.from}</div>
+                            {message.pending === true
+                              ? <div className="bubble"><span className="stream">{t('team.thinking')}</span></div>
+                              : message.error === true
+                                ? <div className="bubble tm-err">{message.text !== '' ? message.text : t('team.error.send')}</div>
+                                : (
+                                  <div className="bubble md">
+                                    <Markdown remarkPlugins={[remarkGfm, remarkBreaks]}>{message.text}</Markdown>
+                                  </div>
+                                )}
+                          </div>
+                        </div>
+                      )
+                    })())}
+                </div>
+              </section>
+              {/* 右侧成员栏：头像 + 分工一句话 + 在想状态点；点击即 @。 */}
+              <aside className="team-side" aria-label={t('team.roster')}>
+                <div className="panel-h"><Icon n="at-sign" className="ic sm" />{t('team.roster')}</div>
+                <div className="team-side-scroll">
+                  {TEAM_AGENTS.map(agent => {
+                    const busy = teamLog.some(row => row.from === agent.id && row.pending === true)
+                    return (
+                      <div key={agent.id} className={`tmb-cell${teamOverrides[agent.id] !== undefined ? ' edited' : ''}`}>
+                        <button type="button" className={`tmb${busy ? ' busy' : ''}`}
+                          title={agent.tagline} onClick={() => { onRosterPick(agent) }}>
+                          <span className="tmb-ava" aria-hidden="true">{agent.emoji}</span>
+                          <span className="tmb-mid">
+                            <span className="tmb-name">{agent.name}</span>
+                            <span className="tmb-tag">{agent.tagline}</span>
+                          </span>
+                          {busy && <span className="tmb-dot" aria-label={t('team.thinking')} />}
+                        </button>
+                        <button type="button" className="tmb-edit" title={t('team.edit')}
+                          aria-label={`${t('team.edit')}: ${agent.name}`} onClick={() => { openAgentEditor(agent) }}>
+                          <Icon n="settings" className="ic xs" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                  <span className="tmb-hint">{t('team.hint')}</span>
+                </div>
+              </aside>
+            </div>
+            {interceptBar}
+            <AskBox
+              disabled={false}
+              placeholder={t('team.placeholder')}
+              sendLabel={t('ask.send')}
+              catalog={null}
+              selection={null}
+              onSelect={noopModelSelect}
+              onSubmit={sendTeam}
+              onFocusChange={setAttentive}
+              insert={teamInsert}
+            />
+          </main>
+        </section>
+      /* byClaude-end */
       )}
+
+      {/* byClaude-start 成员编辑浮层：人格与能力 / 挂载技能（本地覆盖，派发时优先注入）（byClaude） */}
+      {editingAgent !== null && (
+        <div className="dfy-agent-editor" role="dialog" aria-modal="true" aria-label={`${t('team.edit')} · ${editingAgent.name}`}>
+          <div className="ae-card">
+            <div className="ae-head">
+              <span className="ae-title"><span aria-hidden="true">{editingAgent.emoji}</span>{t('team.edit')} · {editingAgent.name}</span>
+              <button type="button" className="ae-close" aria-label={t('chat.detail.close')} onClick={() => { setEditingAgent(null) }}>×</button>
+            </div>
+            <label className="ae-field">
+              <span className="ae-label">{t('team.edit.persona')}<em className="ae-hint">{t('team.edit.personaHint')}</em></span>
+              <textarea value={draftPersona} rows={9}
+                onChange={event => { setDraftPersona(event.target.value) }} />
+            </label>
+            <div className="ae-field">
+              <span className="ae-label">{t('team.edit.skills')}</span>
+              {skillOptions !== null && skillOptions.length > 0 ? (
+                <div className="ae-skills" role="group">
+                  {skillOptions.map(skill => {
+                    const on = draftSkillList.includes(skill.name)
+                    return (
+                      <button key={skill.name} type="button" className={`ae-skill${on ? ' on' : ''}`}
+                        title={skill.description ?? skill.name}
+                        aria-pressed={on} onClick={() => { toggleSkill(skill.name) }}>
+                        {skill.name}
+                      </button>
+                    )
+                  })}
+                </div>
+              ) : (
+                <textarea value={draftSkills} rows={2}
+                  placeholder={skillOptions === null ? t('team.edit.skillsPh') : t('team.edit.skillsEmpty')}
+                  onChange={event => { setDraftSkills(event.target.value) }} />
+              )}
+            </div>
+            <div className="ae-acts">
+              <button type="button" className="ae-btn primary" onClick={saveAgentOverride}>{t('team.edit.save')}</button>
+              <button type="button" className="ae-btn" onClick={resetAgentOverride}>{t('team.edit.reset')}</button>
+              <button type="button" className="ae-btn" onClick={() => { setEditingAgent(null) }}>{t('team.edit.cancel')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* byClaude-end */}
 
       {/* 右下角轻通知 */}
       <div className="dfy-toasts" aria-live="polite">

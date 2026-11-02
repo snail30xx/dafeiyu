@@ -12,7 +12,7 @@
  * 「未分组」桶里，用一条按 data-row-key 的样式规则藏掉那一行。
  */
 import type { IWorkspaces, WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { isButlerHomePath } from './constants.js'
+import { isButlerHomePath, isTeamHomePath } from './constants.js'
 
 /** 已安装源对象登记：防重复包装（插件重载先 dispose 再装，正常不会命中）。 */
 const patched = new WeakSet<object>()
@@ -43,7 +43,7 @@ export function installHomeFilter(workspaces: IWorkspaces): () => void {
   source.getSnapshot = (): WorkspaceSnapshot => {
     const raw = readRaw()
     if (cache?.raw === raw) return cache.view
-    const view: WorkspaceSnapshot = { ...raw, items: raw.items.filter(ws => !isButlerHomePath(ws.path)) }
+    const view: WorkspaceSnapshot = { ...raw, items: raw.items.filter(ws => !isButlerHomePath(ws.path) && !isTeamHomePath(ws.path)) }
     cache = { raw, view }
     return view
   }
@@ -61,11 +61,20 @@ const STYLE_ID = 'dafeiyu-butler-hide'
 /** 会话 id 只放行安全字符，防选择器注入。 */
 const SAFE_SESSION_ID = /^[\w-]{1,128}$/
 
-/**
- * 藏掉侧边栏里管家会话自身那一行（浏览区分组行与平铺行都用 data-row-key）。
- * @param sessionId - 管家会话 id；undefined 清空规则。
- */
-export function setHiddenButlerSession(sessionId: string | undefined): void {
+// byClaude-start 隐身样式支持多会话：管家会话 + team 成员会话共用一条规则，
+// 但各记各的集合——管家 ensure 重跑不清 team，team 重挂不清管家（byClaude）
+let hiddenButlerSessionId: string | undefined
+const hiddenTeamSessionIds = new Set<string>()
+const hiddenSessionIds = new Set<string>()
+
+function syncHiddenIds(): void {
+  hiddenSessionIds.clear()
+  if (hiddenButlerSessionId !== undefined) hiddenSessionIds.add(hiddenButlerSessionId)
+  for (const id of hiddenTeamSessionIds) hiddenSessionIds.add(id)
+}
+
+/** 汇总渲染当前隐身规则（管家 + team 成员）。 */
+function renderHiddenStyle(): void {
   if (typeof document === 'undefined') return
   let style = document.getElementById(STYLE_ID) as HTMLStyleElement | null
   if (style === null) {
@@ -73,10 +82,29 @@ export function setHiddenButlerSession(sessionId: string | undefined): void {
     style.id = STYLE_ID
     document.head.append(style)
   }
-  style.textContent = sessionId !== undefined && SAFE_SESSION_ID.test(sessionId)
-    ? `[data-row-key="session:${sessionId}"]{display:none!important}`
-    : ''
+  const safe = [...hiddenSessionIds].filter(id => SAFE_SESSION_ID.test(id))
+  style.textContent = safe.length === 0
+    ? ''
+    : safe.map(id => `[data-row-key="session:${id}"]`).join(',') + '{display:none!important}'
 }
+
+/**
+ * 藏掉侧边栏里管家会话自身那一行（浏览区分组行与平铺行都用 data-row-key）。
+ * @param sessionId - 管家会话 id；undefined 清空规则。
+ */
+export function setHiddenButlerSession(sessionId: string | undefined): void {
+  hiddenButlerSessionId = sessionId
+  syncHiddenIds()
+  renderHiddenStyle()
+}
+
+/** 追加 team 成员会话行隐身（重复 add 幂等）。 */
+export function addHiddenTeamSession(sessionId: string): void {
+  hiddenTeamSessionIds.add(sessionId)
+  syncHiddenIds()
+  renderHiddenStyle()
+}
+// byClaude-end
 
 /** 移除隐身样式元素（插件卸载时还原侧边栏原貌）。 */
 export function removeHiddenButlerStyle(): void {

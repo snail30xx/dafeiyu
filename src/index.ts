@@ -18,7 +18,8 @@ import { registerHandoffTool } from './handoff.js'
 import { registerSessionTools } from './sessions.js'
 import { registerWorkspaceTools } from './workspaces.js'
 import { BUTLER_HOME_TITLE } from './client/constants.js'
-import { BUTLER_PERSONA_MD } from './persona.js'
+import { TEAM_AGENTS } from './client/constants.js'
+import { BUTLER_PERSONA_MD, TEAM_PERSONAS_ALL } from './persona.js'
 
 /** Loader 注册的插件名。 */
 export const name = 'dafeiyu'
@@ -52,6 +53,22 @@ export function apply(ctx: Context): void {
   })().catch((error: unknown) => {
     ctx.logger.warn('dafeiyu: butler home workspace unavailable: %o', error)
   })
+
+  // byClaude-start agent team 聊天室：每成员一个独立工作区（~/.dafeiyu/team/<id>/），
+  // AGENTS.md 播种角色与技能域——上下文互不污染（byClaude）
+  void (async () => {
+    for (const agent of TEAM_AGENTS) {
+      const persona = TEAM_PERSONAS_ALL[agent.id]
+      if (persona === undefined) continue
+      const dir = join(homedir(), '.dafeiyu', 'team', agent.id)
+      await mkdir(dir, { recursive: true })
+      await writeFile(join(dir, 'AGENTS.md'), persona, { flag: 'wx' }).catch(() => undefined)
+      await ctx.workspaceRegistry.create(dir, `肥鱼团队·${agent.name}`)
+    }
+  })().catch((error: unknown) => {
+    ctx.logger.warn('dafeiyu: team home workspaces unavailable: %o', error)
+  })
+  // byClaude-end
 }
 
 // Contains claude-generated edits.
