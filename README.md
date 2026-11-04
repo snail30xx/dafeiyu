@@ -25,6 +25,7 @@ DeepSeek Harness（dsh ≥ 0.2.2-alpha）的**对话管家**插件：鲸鱼娘�
   - **上下文模型**：每成员独立工作区 + 独立会话（人格与记忆互不污染）；群聊最近 24 条消息作为共享上下文随派发拼接给被 @ 的成员。
   - **成员编辑器**（成员卡悬停 → 齿轮）：人格与能力预填内置全文直接改；挂载技能从系统技能目录（官方 `skills/list`）点选。编辑存本地、派发时优先注入，下轮对话即生效。
 - **人机交互拦截条**：宿主的工具审批（approval）/ 选择题（question）会以琥珀色卡片出现在输入条上方——approval 直接「允许一次 / 拒绝」，question 一键跳官方对话处理，不再因停留在管家面板而漏看。
+- **IM（钉钉机器人）开关**：面板顶栏勾选「是否开启 IM」。「已配置 IM」以 dsh-im 插件的真实状态为准：只读探测 `$DSH_HOME/sdb/application.sqlite` 的 `im_connection_settings` 表（`DSH_HOME` 取环境变量、缺省 `~/.dsh`，行数 > 0 即已配置；dsh-im 服务面不含连接配置状态，真值只在 SQLite），`~/.dafeiyu/im.json`（`{"webhook": "https://…", "secret": "可选"}`）作兜底，任一命中即已配置。host 启动时把该事实同步成标记工作区（`~/.dafeiyu/im`，对侧边栏隐身）带给面板；未配置时勾选项置灰并提示「未检测到 IM 配置」，勾选态存本地（`dafeiyu.im.enabled`）。
 - 管家会话自动定位/创建：本地记忆 id → 标题「大肥鱼管家」匹配（要求 cwd 是管家之家）→ 在管家之家新建并改名。管家之家工作区、team 成员工作区与会话行均对侧边栏/看板隐身。
 
 **助手工具面（管家的手，聊天里由管家调用）**
@@ -73,6 +74,7 @@ src/
 ├── sessions.ts         # 对话工具
 ├── handoff.ts          # 上下文交接（fork）
 ├── context.ts          # 上下文体检与压缩
+├── im.ts               # IM（钉钉机器人）配置检测（dsh-im SQLite 真值 + im.json 兜底）+ 标记工作区同步
 ├── persona.ts          # 管家人格（AGENTS.md）；团队人格转口自 client/teamPersonas.ts
 └── client/
     ├── index.ts          # client 半侧：面板注册 + 管家/成员会话工厂 + 技能目录

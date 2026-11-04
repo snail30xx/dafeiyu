@@ -18,6 +18,17 @@ export function isButlerHomePath(path: string): boolean {
 }
 // byClaude-end
 
+// byClaude-start IM（钉钉机器人）配置标记：host 半侧读到 ~/.dafeiyu/im.json（webhook 合法）
+// 即注册 ~/.dafeiyu/im 标记工作区；面板以它的存在判定「已配置 IM」（byClaude）
+/** IM 标记工作区标题（host 注册用；面板按路径判定，不看标题）。 */
+export const IM_HOME_TITLE = '大肥鱼·IM'
+
+/** 判定是否 IM 标记工作区目录（~/.dafeiyu/im，斜杠与大小写规范化）。 */
+export function isImHomePath(path: string): boolean {
+  return path.replaceAll('\\', '/').toLowerCase().endsWith('/.dafeiyu/im')
+}
+// byClaude-end
+
 // byClaude-start agent team 聊天室：成员定义与目录约定（byClaude）
 /** 团队成员会话标题统一前缀：任务看板与侧边栏按此隐身。 */
 export const TEAM_SESSION_PREFIX = '肥鱼团队·'

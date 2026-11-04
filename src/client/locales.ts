@@ -81,6 +81,9 @@ export const zh = {
   'tstep.received': '已接收',
   'tstep.thinking': '正在想',
   'hero.thinking': '肥鱼正在思考',
+  // byClaude-start 思考过程滚动条：工具调用阶段的实时文案（byClaude）
+  'hero.tool': '正在调用 {name}…',
+  // byClaude-end
   'hero.idle': '待命中 · 随时呼我',
   'hero.openChat': '点击打开原生对话页',
   'hero.runTime': '本次运行',
@@ -106,9 +109,19 @@ export const zh = {
   'chat.detail.running': '正在回复，点此查看',
   'chat.detail.close': '收起对话',
   'chat.empty': '和大肥鱼说第一句吧',
+  // byClaude-start 对话历史分页提示（消息流顶部，可点击翻页）（byClaude）
+  'chat.more.up': '更多消息请往上查看',
+  'chat.more.loading': '正在加载更早的消息…',
+  // byClaude-end
   'panel.chat': '对话',
   'tasks.title': '执行流 · 任务',
   'tasks.count': '{n} 个',
+  // byClaude-start 执行流分页（按最后活跃时间排序，每页 20 条）（byClaude）
+  'tasks.page.prev': '上一页',
+  'tasks.page.next': '下一页',
+  'tasks.page.info': '第 {p}/{n} 页',
+  'tasks.empty': '还没有任务，和大肥鱼说一个。',
+  // byClaude-end
   'cap.idle': '待命中 · 随时呼我',
   'cap.listening': '在听 · 请讲',
   'cap.thinking': '思考中 · 马上就好',
@@ -121,6 +134,16 @@ export const zh = {
   'say.3': '有什么吩咐？',
   'say.4': '今天也要加油呀',
   'say.5': '游个泳先～',
+  // byClaude-start IM（钉钉机器人）开关：无连接/无机器人置灰；勾选 = bot.toggle 起停 stream 监听（byClaude）
+  'im.toggle': '是否开启 IM',
+  'im.missing': '未检测到 IM 配置',
+  'im.unavailable': 'IM 服务不可用',
+  'im.nobot': '未配置钉钉机器人',
+  'im.status.stopped': '监听已停',
+  'im.status.starting': '监听启动中',
+  'im.status.running': '监听中',
+  'im.status.error': '监听异常',
+  // byClaude-end
 } as const
 
 export type DafeiyuKey = keyof typeof zh
@@ -197,6 +220,9 @@ export const en: Record<DafeiyuKey, string> = {
   'tstep.received': 'Received',
   'tstep.thinking': 'Thinking',
   'hero.thinking': 'Fishy is thinking',
+  // byClaude-start live thinking ticker: tool-call phase text (byClaude)
+  'hero.tool': 'calling {name}…',
+  // byClaude-end
   'hero.idle': 'On standby · call me anytime',
   'hero.openChat': 'Open native conversation',
   'hero.runTime': 'This run',
@@ -226,9 +252,19 @@ export const en: Record<DafeiyuKey, string> = {
   'chat.detail.running': 'Replying — open to watch',
   'chat.detail.close': 'Close conversation',
   'chat.empty': 'Say the first word to the fish',
+  // byClaude-start history paging hint (top of the message list; click to page) (byClaude)
+  'chat.more.up': 'Scroll up for earlier messages',
+  'chat.more.loading': 'Loading earlier messages…',
+  // byClaude-end
   'panel.chat': 'Chat',
   'tasks.title': 'Flow · Tasks',
   'tasks.count': '{n}',
+  // byClaude-start 执行流分页（按最后活跃时间排序，每页 20 条）（byClaude）
+  'tasks.page.prev': 'Prev',
+  'tasks.page.next': 'Next',
+  'tasks.page.info': 'Page {p}/{n}',
+  'tasks.empty': 'No tasks yet — tell the butler one.',
+  // byClaude-end
   'cap.idle': 'Standing by · call me anytime',
   'cap.listening': 'Listening · go ahead',
   'cap.thinking': 'Thinking · almost there',
@@ -241,6 +277,16 @@ export const en: Record<DafeiyuKey, string> = {
   'say.3': 'Any orders?',
   'say.4': 'Let\'s do great today',
   'say.5': 'Just swimming~',
+  // byClaude-start IM (DingTalk robot) toggle: greyed out when unconfigured/no bot; checked = bot.toggle (byClaude)
+  'im.toggle': 'Enable IM',
+  'im.missing': 'No IM configuration detected',
+  'im.unavailable': 'IM service unavailable',
+  'im.nobot': 'No DingTalk bot configured',
+  'im.status.stopped': 'Listener stopped',
+  'im.status.starting': 'Listener starting',
+  'im.status.running': 'Listening',
+  'im.status.error': 'Listener error',
+  // byClaude-end
 }
 // byClaude-end
 

@@ -6,12 +6,14 @@
  * statusbar）+ 控制台（hero 思考横幅 + cs-body：chat-panel + flow-panel 大步骤时间线）。
  * CSS 与 SVG symbol 由 boardCss.ts / boardDefs.ts 从设计稿全量迁移（scoped 到 .dfy-root）。
  * 数据全部真实：消息流 = 管家会话事件摘要；任务卡 = 会话目录看板；输入条直排会话队列。
+ * byClaude-start 消息流不截断：长回复全文 Markdown 渲染；历史分页 = 默认最近 30 条，
+ * 顶部提示「更多消息请往上查看」，滚到顶翻页（窗口内 +30 条，窗口尽则 loadOlder 拉更早）。（byClaude）
  * 官方 composer 完整对话保留为 detail 浮层（「完整对话」按钮进入，Esc 收起）。
  * byClaude
  */
 // byClaude-start
 // byClaude-start
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import Markdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import remarkBreaks from 'remark-breaks'
@@ -24,8 +26,9 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { BUTLER_TITLE, isButlerHomePath, TEAM_AGENTS, TEAM_DEFAULT_AGENT, TEAM_SESSION_PREFIX } from './constants.js'
+import { BUTLER_TITLE, isButlerHomePath, isImHomePath, TEAM_AGENTS, TEAM_DEFAULT_AGENT, TEAM_SESSION_PREFIX } from './constants.js'
 import { TEAM_PERSONAS_ALL } from './teamPersonas.js'
+import { rawWorkspaceSnapshot } from './homeFilter.js'
 import type { TeamAgentDef } from './constants.js'
 import { BOARD_CSS } from './boardCss.js'
 import { SVG_DEFS } from './boardDefs.js'
@@ -35,6 +38,26 @@ import type { DafeiyuKey } from './locales.js'
 type SessionFaceState = SessionReference['binding']['session'] extends ObservableSnapshot<infer S> ? S : never
 type SessionEventsState = SessionReference['binding']['eventSource'] extends ObservableSnapshot<infer W> ? W : never
 
+// byClaude-start IM（钉钉机器人）遥控面：结构对齐 dsh-im 契约 ImBotView 的最小字段（byClaude）
+/** dsh-im 机器人快照里勾选框关心的字段（监听状态四态）。 */
+export interface ImBotLike {
+  readonly id: number
+  readonly name: string
+  readonly enabled: boolean
+  readonly listenerStatus: 'stopped' | 'starting' | 'running' | 'error'
+  readonly lastError?: string | undefined
+  readonly revision: number
+}
+
+/** 面板对 dsh-im '/im' RPC 的最小遥控面：读快照 bots / 开关机器人。 */
+export interface ButlerImControl {
+  /** 读快照里的 bots；通道或服务不可用返回 null。 */
+  readonly bots: () => Promise<readonly ImBotLike[] | null>
+  /** 开关机器人（带乐观锁 revision）；成功返回新 bots，失败返回 null。 */
+  readonly toggle: (botId: number, expectedRevision: number, enabled: boolean) => Promise<readonly ImBotLike[] | null>
+}
+// byClaude-end
+
 /** 注入面板的动作面与数据源。 */
 export interface ButlerInjected {
   readonly hooks: {
@@ -43,6 +66,12 @@ export interface ButlerInjected {
     /** 工作区列表快照：取全局归档集与管家之家路径，看板不展示已归档/管家会话。 */
     readonly workspaceList: ObservableSnapshot<WorkspaceSnapshot>
   }
+  // byClaude-start 原始工作区快照源（未过 homeFilter 投影）：面板检测 IM 标记工作区用（byClaude）
+  readonly workspaceRaw: ObservableSnapshot<WorkspaceSnapshot>
+  // byClaude-end
+  // byClaude-start IM（钉钉机器人）遥控面（dsh-im 的 '/im' RPC 经 connection 服务）；null = 通道不可用（byClaude）
+  readonly imControl: ButlerImControl | null
+  // byClaude-end
   /** 取得管家会话引用：找不到就新建并改名，返回已 retain 的引用（面板负责 release）。 */
   readonly acquire: () => Promise<SessionReference>
   // byClaude-start agent team 聊天室：成员会话引用工厂（独立工作区 = 独立上下文）（byClaude）
@@ -102,8 +131,16 @@ const IGNORE_STORAGE_KEY = 'dafeiyu.board.ignore'
 /** 待确认窗口：最近活动过且没在跑的对话视为等用户确认。 */
 const PENDING_WINDOW_MS = 48 * 60 * 60 * 1000
 const DONE_LIST_CAP = 50
-/** 迷你聊天总结最多展示的消息条数（user + butler + 流式行合计）。 */
-const DIGEST_ROWS = 6
+// byClaude-start 执行流列表每页条数：默认最近 20 个，超出翻页（byClaude）
+const FLOW_PAGE_SIZE = 20
+// byClaude-end
+// byClaude-start 对话历史分页：默认渲染最近 30 条，滚到顶自动翻页
+// （窗口内再放 30 条；窗口耗尽拉 session.loadOlder 的更早历史页）（byClaude）
+/** 消息流默认渲染条数（最近的 N 条）。 */
+const DIGEST_VISIBLE_INIT = 30
+/** 每次上拉翻页放出的条数（窗口内翻页与 loadOlder 后共用）。 */
+const DIGEST_PAGE = 30
+// byClaude-end
 
 /** 模块级稳定选择器：让 useSyncExternalStore 的 getSnapshot 引用稳定。 */
 const selectRunning = (state: SessionFaceState | undefined): boolean => state?.running ?? false
@@ -126,35 +163,10 @@ const EMPTY_DIGEST: readonly ChatDigestRow[] = []
 /** revision → 摘要行缓存：同一快照 revision 期间复用同一数组引用，防无限重渲染。 */
 const digestCache = new WeakMap<object, { revision: number; rows: readonly ChatDigestRow[] }>()
 
-// byClaude-start 摘要截断：按整行截而不是按字符截，保护 Markdown 结构（byClaude）
-/** 单条摘要的字符预算：超出按行边界截断（迷你流可滚动，无需狠截）。 */
-const DIGEST_TEXT_CAP = 480
-/** 截断省略标记预留。 */
-const DIGEST_TEXT_TAIL = 24
+// byClaude-start 摘要不再截断：长回复全文进气泡（消息流本身可滚动，完整信息不丢；
+// 控制台 hero 思考横幅的紧凑显示交给 CSS 行数钳制 + title 悬浮全文）（byClaude）
 
-/**
- * 单条摘要截断：超过预算保留前若干完整行 + 省略号。
- * 必须按整行截：拦腰截半行会把粗体/列表项/代码块截成残缺 Markdown，渲染就烂了；
- * 截断点若停在未闭合的代码围栏（``` 奇数次），补一个闭合围栏防止代码块吞掉结尾。
- */
-function digestText(text: string): string {
-  if (text.length <= DIGEST_TEXT_CAP) return text
-  const lines = text.split('\n')
-  const kept: string[] = []
-  let used = 0
-  for (const line of lines) {
-    if (used + line.length + 1 > DIGEST_TEXT_CAP - DIGEST_TEXT_TAIL) break
-    kept.push(line)
-    used += line.length + 1
-  }
-  let out = kept.join('\n').trimEnd()
-  const fences = out.split(/^`{3}/m).length - 1
-  if (fences % 2 === 1) out += '\n```'
-  return `${out}\n…`
-}
-// byClaude-end
-
-/** 从事件窗收最近的真人消息摘要与流式管家输出（新消息在后）。 */
+/** 从事件窗收全部真人消息与流式管家输出（新消息在后；渲染条数由面板分页控制）。 */
 const selectRecentTurns = (window: SessionEventsState | undefined): readonly ChatDigestRow[] => {
   if (window === undefined) return EMPTY_DIGEST
   const view = window as { readonly entries?: readonly unknown[]; readonly revision?: number }
@@ -186,12 +198,12 @@ const selectRecentTurns = (window: SessionEventsState | undefined): readonly Cha
     }
   }
   if (liveText !== '') {
-    rows.push({ seq: liveSeq, role: 'butler', text: digestText(liveText), time: liveTime, streaming: true })
+    rows.push({ seq: liveSeq, role: 'butler', text: liveText, time: liveTime, streaming: true })
   }
 
   // durable 消息：user 只认真人输入（source.kind === 'user'）——运行时上下文、
   // system-reminder 等工具注入也走 user/message 事件，混进摘要就全是噪音。
-  for (; index >= 0 && rows.length < DIGEST_ROWS; index--) {
+  for (; index >= 0; index--) {
     // 经 event-type 判别后 event 必在：cast 里声明为必有省去二次判空。
     const entry = entries[index] as {
       readonly type?: unknown
@@ -215,7 +227,7 @@ const selectRecentTurns = (window: SessionEventsState | undefined): readonly Cha
     rows.push({
       seq: entry.event.seq ?? index,
       role: eventType === 'user/message' ? 'user' : 'butler',
-      text: digestText(text),
+      text,
       time: entry.event.time ?? 0,
     })
   }
@@ -223,6 +235,95 @@ const selectRecentTurns = (window: SessionEventsState | undefined): readonly Cha
   digestCache.set(window as object, { revision, rows: rowsView })
   return rowsView
 }
+
+// byClaude-start 事件窗「还有更早历史」标记：loadOlder 翻页的数据面（byClaude）
+/** 模块级稳定选择器：事件窗口是否还有更早历史可拉。 */
+const selectEventsHasMore = (window: SessionEventsState | undefined): boolean =>
+  (window as { readonly hasMore?: boolean } | undefined)?.hasMore === true
+// byClaude-end
+
+// byClaude-start 控制台思考过程滚动条：跑动中管家「此刻在干嘛」的实时尾部——
+// reasoning-delta（思考）/ text-delta（正文）/ 工具调用名，随流式增量刷新；
+// 没有流式尾巴（工具在执行）时报最近一个 durable tool/call（byClaude）
+/** 滚动条状态：kind = 最近一次流式活动的类型；text = 折行取尾的展示文本。 */
+interface LiveTickerState {
+  readonly kind: 'reasoning' | 'text' | 'tool'
+  readonly text: string
+  readonly truncated: boolean
+}
+
+/** 展示尾部的字符预算（状态栏单行，只看最新一段）。 */
+const TICKER_TAIL = 120
+/** 倒序收集的提前停机阈值：最近一条流的尾部够拼展示即可，长回复不整段倒序扫。 */
+const TICKER_COLLECT = 600
+/** 无流式尾巴时向后找最近 tool/call 的扫描预算。 */
+const TICKER_DURABLE_SCAN = 300
+
+const tickerCache = new WeakMap<object, { revision: number; value: LiveTickerState | undefined }>()
+
+/** 折行取尾：空白压成单空格，保留最后 TICKER_TAIL 字符（截过则标记加「…」前缀）。 */
+function tickerTail(text: string): { readonly text: string; readonly truncated: boolean } {
+  const flat = text.replace(/\s+/g, ' ').trim()
+  if (flat.length <= TICKER_TAIL) return { text: flat, truncated: false }
+  return { text: flat.slice(-TICKER_TAIL), truncated: true }
+}
+
+const selectLiveTicker = (window: SessionEventsState | undefined): LiveTickerState | undefined => {
+  if (window === undefined) return undefined
+  const view = window as { readonly entries?: readonly unknown[]; readonly revision?: number }
+  const revision = view.revision ?? -1
+  const cached = tickerCache.get(window as object)
+  if (cached !== undefined && cached.revision === revision) return cached.value
+  const entries = view.entries ?? []
+  // 尾部 transient 段（正在流式的那次尝试）：倒序吃 delta、正着拼回；
+  // 最先遇到的那种 delta = 最新活动，决定滚动条展示哪条流。
+  let reasoning = ''
+  let text = ''
+  let toolName: string | undefined
+  let lastKind: LiveTickerState['kind'] | undefined
+  for (let index = entries.length - 1; index >= 0; index--) {
+    const entry = entries[index] as {
+      readonly type?: unknown
+      readonly event?: { readonly type?: unknown; readonly data?: { readonly chunk?: { readonly type?: unknown; readonly text?: unknown; readonly name?: unknown } } }
+    }
+    if (entry?.type !== 'transient') break
+    if (entry.event?.type !== 'assistant/live-chunk') continue
+    const chunk = entry.event.data?.chunk
+    if (chunk?.type === 'reasoning-delta' && typeof chunk.text === 'string') {
+      if (lastKind === undefined) lastKind = 'reasoning'
+      reasoning = chunk.text + reasoning
+    } else if (chunk?.type === 'text-delta' && typeof chunk.text === 'string') {
+      if (lastKind === undefined) lastKind = 'text'
+      text = chunk.text + text
+    } else if (chunk?.type === 'tool-call-delta') {
+      if (lastKind === undefined) lastKind = 'tool'
+      if (toolName === undefined && typeof chunk.name === 'string') toolName = chunk.name
+    } else continue
+    if (lastKind === 'reasoning' && reasoning.length >= TICKER_COLLECT) break
+    if (lastKind === 'text' && text.length >= TICKER_COLLECT) break
+    if (lastKind === 'tool' && toolName !== undefined) break
+  }
+  let value: LiveTickerState | undefined
+  if (lastKind === 'reasoning') value = { kind: 'reasoning', ...tickerTail(reasoning) }
+  else if (lastKind === 'text') value = { kind: 'text', ...tickerTail(text) }
+  else if (lastKind === 'tool') value = { kind: 'tool', text: toolName ?? '', truncated: false }
+  else {
+    // 没有流式尾巴：多半是工具在执行——报最近一个 durable tool/call 的工具名。
+    for (let index = entries.length - 1; index >= 0 && index >= entries.length - TICKER_DURABLE_SCAN; index--) {
+      const entry = entries[index] as {
+        readonly type?: unknown
+        readonly event?: { readonly type?: unknown; readonly data?: { readonly name?: unknown } }
+      }
+      if (entry?.type !== 'event' || entry.event?.type !== 'tool/call') continue
+      const name = entry.event.data?.name
+      value = { kind: 'tool', text: typeof name === 'string' ? name : '', truncated: false }
+      break
+    }
+  }
+  tickerCache.set(window as object, { revision, value })
+  return value
+}
+// byClaude-end
 
 /**
  * 订阅一个可能尚未就绪的快照源；source 为 undefined 时返回 select(undefined)。
@@ -462,8 +563,14 @@ function Wave() {
 /**
  * 消息流（设计稿 .msgs）：user 右「我」/ ai 左精灵头像；
  * 流式行带 stream 渐变 + 声波柱 + 计时胶囊。
+ * byClaude-start 历史分页与滚动维护：默认渲染最近 N 条（面板切片传入），顶部提示
+ * 「更多消息请往上查看」；滚到顶（或点提示）触发翻页。滚动规则：
+ * - 粘底：仅当用户停在底部（< 80px）才跟随新消息/流式增量滚到底；
+ * - 顶部锚定：翻页拉出的旧消息插在上方，恢复「距底距离」让视口停在原内容上，
+ *   用户继续上滚才再翻下一页（继续滚动 = 继续分页）。
+ * overflow-anchor 关掉（boardCss），浏览器原生锚定与本恢复逻辑二选一，JS 版跨引擎可判。（byClaude）
  */
-function MsgList({ rows, running, thinking, t, digestRef, userAvatar }: {
+function MsgList({ rows, running, thinking, t, digestRef, userAvatar, paging }: {
   rows: readonly ChatDigestRow[]
   running: boolean
   /** 无流式行但会话在跑：追加「正在想…」占位行。 */
@@ -472,9 +579,73 @@ function MsgList({ rows, running, thinking, t, digestRef, userAvatar }: {
   digestRef: { readonly current: HTMLDivElement | null }
   /** 登录用户头像 URL；null 时用户消息头像退回「我」字。 */
   userAvatar: string | null
+  /** 上拉分页面：more = 还有更早消息；onReachTop = 滚到顶部/点提示时翻页。 */
+  paging?: { readonly more: boolean; readonly loading: boolean; readonly onReachTop: () => void } | undefined
 }) {
+  /** 用户是否停在底部（粘底跟随的开关；挂载初始 true = 首屏落底）。 */
+  const atBottomRef = useRef(true)
+  /** 触发翻页那一刻的「距底距离」：旧消息插入后按它恢复视口。 */
+  const anchorRef = useRef<number | null>(null)
+  /** 上一轮首行 seq：变化 = 顶部插入了更早的消息。 */
+  const prevFirstSeqRef = useRef<number | undefined>(undefined)
+  useLayoutEffect(() => {
+    const node = digestRef.current
+    if (node === null) return
+    const firstSeq = rows[0]?.seq
+    const prepended = prevFirstSeqRef.current !== undefined && firstSeq !== prevFirstSeqRef.current
+    if (prepended && anchorRef.current !== null) {
+      // 顶部锚定：视口回到原内容（翻页不跳屏）。
+      node.scrollTop = node.scrollHeight - anchorRef.current
+      anchorRef.current = null
+    } else if (anchorRef.current !== null) {
+      // 翻页在途（loadOlder 异步）：流式尾部增量后刷新基线，保持锚有效。
+      anchorRef.current = node.scrollHeight - node.scrollTop
+    } else if (atBottomRef.current) {
+      node.scrollTop = node.scrollHeight
+    }
+    prevFirstSeqRef.current = firstSeq
+  }, [rows, digestRef])
+  // byClaude-start 侧边栏收起/展开等容器变宽变窄时，消息重新折行、scrollHeight 跟着
+  // 变，但 rows 没变——上面的粘底 effect 不跑，列表停在旧 scrollTop 上（最新消息沉到
+  // 视口外）。三路信号兜底重钉：容器尺寸变化（ResizeObserver）、窗口缩放（resize）、
+  // 任意点击后的两拍延时（侧边栏收起/展开没有原生事件，但必经一次点击；实测部分
+  // 嵌入壳不派发 RO/resize，点击链路始终可用）。用户不在底部（atBottomRef=false）时
+  // 一律不动，不打断上翻阅读（byClaude）
+  useEffect(() => {
+    const node = digestRef.current
+    if (node === null) return
+    const repin = (): void => {
+      if (atBottomRef.current) node.scrollTop = node.scrollHeight
+    }
+    const observer = new ResizeObserver(repin)
+    observer.observe(node)
+    const onDocClick = (): void => {
+      window.setTimeout(repin, 50)
+      window.setTimeout(repin, 250)
+    }
+    document.addEventListener('click', onDocClick, true)
+    window.addEventListener('resize', repin)
+    return () => {
+      observer.disconnect()
+      document.removeEventListener('click', onDocClick, true)
+      window.removeEventListener('resize', repin)
+    }
+  }, [digestRef])
+  // byClaude-end
+  const onScroll = (event: React.UIEvent<HTMLDivElement>): void => {
+    const node = event.currentTarget
+    atBottomRef.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80
+    if (paging === undefined || node.scrollTop > 48 || node.scrollHeight - node.clientHeight <= 8) return
+    anchorRef.current = node.scrollHeight - node.scrollTop
+    paging.onReachTop()
+  }
   return (
-    <div className="msgs" ref={digestRef} role="log" aria-live="polite" aria-label={t('panel.chat')}>
+    <div className="msgs" ref={digestRef} role="log" aria-live="polite" aria-label={t('panel.chat')} onScroll={onScroll}>
+      {paging !== undefined && paging.more && rows.length > 0 && (
+        <button type="button" className="dfy-more-hint" onClick={paging.onReachTop}>
+          {paging.loading ? t('chat.more.loading') : t('chat.more.up')}
+        </button>
+      )}
       {rows.length === 0
         ? <div className="msg ai" key="empty"><div className="ava" aria-hidden="true"><ButlerAvatar /></div><div className="bubble">{t('chat.empty')}</div></div>
         : rows.map(row => (
@@ -847,7 +1018,7 @@ function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect
  * @returns 工作台/控制台双视图 + 自绘输入条 + 官方完整对话浮层。
  */
 export function ButlerPanel({
-  useSessionList, useWorkspaceList, useSessionStatus, acquire, acquireTeam, openSession, models, listSkills, t, renderSlot, SessionProvider,
+  useSessionList, useWorkspaceList, useSessionStatus, workspaceRaw, imControl, acquire, acquireTeam, openSession, models, listSkills, t, renderSlot, SessionProvider,
 }: ButlerPanelProps) {
   const [reference, setReference] = useState<SessionReference | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -875,6 +1046,41 @@ export function ButlerPanel({
   // byClaude-end
   const [doneMap, setDoneMap] = useState<Record<string, true>>(() => readDoneMap())
   const [ignoreMap, setIgnoreMap] = useState<Record<string, true>>(() => readIgnoreMap())
+  // byClaude-start IM（钉钉机器人）开关：勾选真值 = dsh-im 快照里主 bot 的 enabled，勾/取消直接
+  // bot.toggle（返回值即新快照，无轮询）。「已配置 IM」仍由标记工作区判定，但可勾还要求快照里
+  // 存在 bot（stream 机器人没配 = 无从接入）；消息收发与自动回复全部发生在 dsh-im 内（byClaude）
+  const [imBots, setImBots] = useState<readonly ImBotLike[] | null>(null)
+  const [imBusy, setImBusy] = useState(false)
+  const imSource = workspaceRaw
+  const imConfigured = useSyncExternalStore(
+    useCallback((onChange: () => void) => imSource.subscribe(onChange), [imSource]),
+    useCallback(() => {
+      try { return rawWorkspaceSnapshot().items.some(ws => isImHomePath(ws.path)) } catch { return false }
+    }, []),
+  )
+  // 快照加载：面板挂载时一次；标记工作区晚到（host 播种是异步的）翻转成已配置时再补一次。
+  useEffect(() => {
+    if (imControl === null) return
+    let alive = true
+    void imControl.bots().then(next => { if (alive) setImBots(next) })
+    return () => { alive = false }
+  }, [imControl, imConfigured])
+  const imBot = imBots !== null && imBots.length > 0 ? imBots[0] : undefined
+  // 主 bot：IM 已连接且有 bot 才可勾；多 bot 时取首个，名称挂 title 上。
+  const imPrimary = imConfigured && imBot !== undefined ? imBot : undefined
+  const imOn = imPrimary !== undefined && imPrimary.enabled
+  const imHint = !imConfigured ? t('im.missing')
+    : imBots === null ? t('im.unavailable')
+    : imBot === undefined ? t('im.nobot')
+    : undefined
+  const toggleIm = useCallback(() => {
+    if (imPrimary === undefined || imBusy || imControl === null) return
+    setImBusy(true)
+    void imControl.toggle(imPrimary.id, imPrimary.revision, !imPrimary.enabled)
+      .then(next => { if (next !== null) setImBots(next) })
+      .finally(() => { setImBusy(false) })
+  }, [imPrimary, imBusy, imControl])
+  // byClaude-end
   const [detailOpen, setDetailOpen] = useState(false)
   const [view, setView] = useState<'workbench' | 'console' | 'team'>('console')
   // 生命感状态：attentive = 用户聚焦输入条（她在听）；bouncing = 一次性小跳。
@@ -917,6 +1123,42 @@ export function ButlerPanel({
   const events = reference?.binding.eventSource
   const running = useSnapshot(face, selectRunning)
   const digest = useSnapshot(events, selectRecentTurns)
+  // byClaude-start 对话历史分页：窗口 hasMore + 本地可见条数（默认 30，上拉逐页放出）（byClaude）
+  const eventsHasMore = useSnapshot(events, selectEventsHasMore)
+  /** 思考过程滚动条：跑动中「此刻在干嘛」的实时尾部（思考/正文/工具调用）。 */
+  const ticker = useSnapshot(events, selectLiveTicker)
+  const [digestVisible, setDigestVisible] = useState(DIGEST_VISIBLE_INIT)
+  const [digestLoadingOlder, setDigestLoadingOlder] = useState(false)
+  const digestLoadingRef = useRef(false)
+  // 会话换了（重开面板/新管家会话）：翻页状态回初始。
+  useEffect(() => {
+    setDigestVisible(DIGEST_VISIBLE_INIT)
+  }, [reference?.sessionId])
+  /**
+   * 翻一页更早的消息：窗口里还有藏着的旧消息就再放 30 条；
+   * 窗口放尽且 hasMore 才真正拉历史（session.loadOlder，一页 ≥50 条消息），
+   * 到货后再放 30 条进视野。并发与重复触发由 digestLoadingRef 挡住。
+   */
+  const loadDigestOlder = useCallback(() => {
+    if (digestLoadingRef.current) return
+    if (digest.length > digestVisible) {
+      setDigestVisible(previous => previous + DIGEST_PAGE)
+      return
+    }
+    const session = reference?.binding.session
+    if (session === undefined || !eventsHasMore) return
+    digestLoadingRef.current = true
+    setDigestLoadingOlder(true)
+    void Promise.resolve(session.loadOlder())
+      .catch(() => undefined)
+      .finally(() => {
+        digestLoadingRef.current = false
+        setDigestLoadingOlder(false)
+        // 历史页已 prepend 进窗口：放出下一页让用户看到刚拉的旧消息。
+        setDigestVisible(previous => previous + DIGEST_PAGE)
+      })
+  }, [digest.length, digestVisible, eventsHasMore, reference])
+  // byClaude-end
   const streaming = (digest.at(-1)?.streaming ?? false) === true
   /** 登录用户头像：宿主 UI 头像 img 与面板同 document，按 user-avatar src 特征取；取不到退回「我」。 */
   const [userAvatar, setUserAvatar] = useState<string | null>(null)
@@ -955,11 +1197,8 @@ export function ButlerPanel({
     if (digest.length > 0) digestSeenRef.current = true
   }, [digest])
 
-  // 新消息/流式增量落地后消息流滚到底部。
-  useEffect(() => {
-    const node = digestRef.current
-    if (node !== null) node.scrollTop = node.scrollHeight
-  }, [digest])
+  // byClaude-start 消息流滚动（粘底跟随/翻页锚定/首屏落底）已移入 MsgList 自管：
+  // 面板级「每次 digest 变化强制滚底」会打断翻历史，已删除（byClaude）
 
   // 蹦跳 1.5s 内自然收势。
   useEffect(() => {
@@ -1035,6 +1274,24 @@ export function ButlerPanel({
       .slice(0, DONE_LIST_CAP)
     return { ongoing, pending, done }
   }, [listState, workspaceState, doneMap, ignoreMap, reference?.sessionId])
+
+  // byClaude-start 执行流单列时间序：三组（进行中/待确认/已完成）合并成一条按
+  // 最后活跃时间（updatedAt 降序）排的列表，最近 20 个一页；行上仍带各自 stage
+  // 徽标。页码在列表缩短时钳到最后一页，不额外开 effect（byClaude）
+  const [flowPage, setFlowPage] = useState(0)
+  const flowRows = useMemo(() => {
+    const stageOf = new Map<string, 'ongoing' | 'pending' | 'done'>()
+    for (const row of board.ongoing) stageOf.set(row.id, 'ongoing')
+    for (const row of board.pending) stageOf.set(row.id, 'pending')
+    for (const row of board.done) stageOf.set(row.id, 'done')
+    return [...board.ongoing, ...board.pending, ...board.done]
+      .sort((left, right) => right.updatedAt - left.updatedAt)
+      .map(row => ({ row, stage: stageOf.get(row.id) ?? 'done' }))
+  }, [board])
+  const flowPageCount = Math.max(1, Math.ceil(flowRows.length / FLOW_PAGE_SIZE))
+  const flowPageIndex = Math.min(flowPage, flowPageCount - 1)
+  const flowPageRows = flowRows.slice(flowPageIndex * FLOW_PAGE_SIZE, (flowPageIndex + 1) * FLOW_PAGE_SIZE)
+  // byClaude-end
 
   // byClaude-start 人机交互拦截：宿主把 approval/question 挂在 SessionStatus.pendingInteraction，
   // 官方卡片只进 Conversation 视图；面板自取全表投影成拦截卡（管家会话优先，最多 3 张）。
@@ -1371,9 +1628,20 @@ export function ButlerPanel({
 
   const greeting = t(greetingKey(new Date()))
   const watching = board.ongoing.length + board.pending.length + board.done.length
-  // 控制台思考横幅：最新一条管家输出（含流式）；没话说就亮状态文案。
+  // byClaude-start 控制台思考横幅：跑着时是「思考过程滚动条」（reasoning/正文尾部、
+  // 工具调用名，随流式刷新，单行滚动）；空闲回落到最新一条管家输出（两行钳制）（byClaude）
   let thought = t('cap.idle')
   for (const row of digest) if (row.role === 'butler') thought = row.text
+  let thoughtLive = false
+  if (running && ticker !== undefined) {
+    thoughtLive = true
+    if (ticker.kind === 'tool') {
+      thought = ticker.text !== '' ? t('hero.tool').replace('{name}', ticker.text) : t('butler.thinking')
+    } else {
+      thought = ticker.truncated ? `…${ticker.text}` : ticker.text
+    }
+  }
+  // byClaude-end
 
   const chat = reference !== undefined
     ? <SessionProvider session={reference}>{renderSlot('dafeiyu.butler.chat', {})}</SessionProvider>
@@ -1382,16 +1650,25 @@ export function ButlerPanel({
   const moodDot = mood === 'work' ? 'dfy-dot-run' : mood === 'listen' ? 'dfy-dot-listen' : 'dot-ok'
   const moodText = mood === 'work' ? t('badge.thinking') : mood === 'listen' ? t('badge.listening') : t('badge.idle')
 
+  // byClaude-start 消息流只渲染最近 digestVisible 条（默认 30）；顶部还有更早消息时
+  // 交给翻页（窗口内翻页 + loadOlder 拉历史），提示行由 MsgList 渲染（byClaude）
+  const digestView = digest.slice(-digestVisible)
   const msgList = (
     <MsgList
-      rows={failed ? [] : digest}
+      rows={failed ? [] : digestView}
       running={running}
       thinking={t('butler.thinking')}
       t={t}
       digestRef={digestRef}
       userAvatar={userAvatar}
+      paging={{
+        more: !failed && (digest.length > digestVisible || eventsHasMore),
+        loading: digestLoadingOlder,
+        onReachTop: loadDigestOlder,
+      }}
     />
   )
+  // byClaude-end
 
   return (
     <div className="dfy-root">
@@ -1424,6 +1701,28 @@ export function ButlerPanel({
           </button>
           {/* byClaude-end */}
         </nav>
+        {/* byClaude-start IM（钉钉机器人）开关：勾 = bot.toggle 起停 stream 监听；旁挂监听状态灯（byClaude） */}
+        <label
+          className={`dfy-im-toggle${imPrimary !== undefined && !imBusy ? '' : ' off'}`}
+          title={imPrimary !== undefined
+            ? `${imPrimary.name} · ${t(`im.status.${imPrimary.listenerStatus}`)}`
+              + (imPrimary.listenerStatus === 'error' && imPrimary.lastError !== undefined ? `：${imPrimary.lastError}` : '')
+            : imHint}
+        >
+          <input
+            type="checkbox"
+            checked={imOn}
+            disabled={imPrimary === undefined || imBusy}
+            aria-label={t('im.toggle')}
+            onChange={toggleIm}
+          />
+          <span>{t('im.toggle')}</span>
+          {imPrimary !== undefined && (
+            <em className={`dfy-im-dot dfy-im-${imPrimary.listenerStatus}`} aria-hidden="true" />
+          )}
+          {imPrimary === undefined && imHint !== undefined && <em className="dfy-im-hint">{imHint}</em>}
+        </label>
+        {/* byClaude-end */}
         <span className="chip chip-ok">
           <span className={`dot ${moodDot}`} aria-hidden="true" />{moodText}
         </span>
@@ -1557,7 +1856,7 @@ export function ButlerPanel({
         <section id="view-console" className="view cs" aria-label={t('view.console')}>
           <main className="cs-main">
             <div
-              className={`hero${reference !== undefined ? ' clickable' : ''}`}
+              className={`hero${reference !== undefined ? ' clickable' : ''}${running ? ' running' : ''}`}
               title={reference !== undefined ? t('hero.openChat') : undefined}
               role={reference !== undefined ? 'button' : undefined}
               tabIndex={reference !== undefined ? 0 : undefined}
@@ -1567,10 +1866,18 @@ export function ButlerPanel({
                 ? (event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); openButlerChat() } })
                 : undefined}
             >
-              <div className="hero-orb" aria-hidden="true"><ButlerFish size={46} running={running} /></div>
+              {/* byClaude-start 跑动轨道：running 时鲸鱼娘在 84px 轨道上来回跑（帧动画 + 位移），
+                  停下回 breathe 待机呼吸（byClaude） */}
+              <div className="hero-orb-track" aria-hidden="true">
+                <div className="hero-orb"><ButlerFish size={46} running={running} /></div>
+              </div>
+              {/* byClaude-end */}
               <div className="hero-mid">
                 <div className="hero-label"><Icon n="sparkles" className="ic xs" />{running ? t('hero.thinking') : t('hero.idle')}</div>
-                <div className="thought"><span className="mono">{thought}</span><span className="caret" aria-hidden="true" /></div>
+                {/* byClaude-start 思考横幅＝状态栏：live 态单行滚动条（思考过程实时尾部），
+                    空闲态两行钳制的最新回复；不放全文（全文看下方对话面板）（byClaude） */}
+                <div className={`thought${thoughtLive ? ' live' : ''}`}><span className="mono">{thought}</span><span className="caret" aria-hidden="true" /></div>
+                {/* byClaude-end */}
               </div>
               {board.ongoing.length > 0 && (
                 <div className="hero-timer">
@@ -1595,27 +1902,31 @@ export function ButlerPanel({
                   {t('tasks.title').replace(' · ', ' · ')}{t('tasks.count').replace('{n}', String(watching))}
                 </div>
                 <div className="flow-scroll">
+                  {flowRows.length === 0 && <div className="dfy-empty-row">{t('tasks.empty')}</div>}
                   <ol className="flow">
-                    {board.ongoing.map(row => (
-                      <FlowStep key={row.id} row={row} stage="ongoing" t={t}
-                        onOpen={() => { openSession(row.id) }}
-                        onApprove={() => { markDone(row.id, row.displayTitle) }}
-                        onReject={() => { ignoreSession(row.id, row.displayTitle) }} />
-                    ))}
-                    {board.pending.map(row => (
-                      <FlowStep key={row.id} row={row} stage="pending" t={t}
-                        onOpen={() => { openSession(row.id) }}
-                        onApprove={() => { markDone(row.id, row.displayTitle) }}
-                        onReject={() => { ignoreSession(row.id, row.displayTitle) }} />
-                    ))}
-                    {board.done.map(row => (
-                      <FlowStep key={row.id} row={row} stage="done" t={t}
+                    {flowPageRows.map(({ row, stage }) => (
+                      <FlowStep key={row.id} row={row} stage={stage} t={t}
                         onOpen={() => { openSession(row.id) }}
                         onApprove={() => { markDone(row.id, row.displayTitle) }}
                         onReject={() => { ignoreSession(row.id, row.displayTitle) }} />
                     ))}
                   </ol>
                 </div>
+                {flowPageCount > 1 && (
+                  <div className="flow-pager">
+                    <button type="button" className="mini pg"
+                      disabled={flowPageIndex === 0}
+                      aria-label={t('tasks.page.prev')}
+                      onClick={() => { setFlowPage(Math.max(0, flowPageIndex - 1)) }}>{t('tasks.page.prev')}</button>
+                    <span className="pg-info mono">
+                      {t('tasks.page.info').replace('{p}', String(flowPageIndex + 1)).replace('{n}', String(flowPageCount))}
+                    </span>
+                    <button type="button" className="mini pg"
+                      disabled={flowPageIndex === flowPageCount - 1}
+                      aria-label={t('tasks.page.next')}
+                      onClick={() => { setFlowPage(Math.min(flowPageCount - 1, flowPageIndex + 1)) }}>{t('tasks.page.next')}</button>
+                  </div>
+                )}
               </section>
             </div>
             {interceptBar}

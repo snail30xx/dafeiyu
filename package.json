@@ -1,6 +1,6 @@
 {
   "name": "dafeiyu",
-  "version": "0.1.1",
+  "version": "0.1.4",
   "description": "大肥鱼：DeepSeek Harness 对话管家插件（拟人管家聊天 + fatfish_* 管理工具）",
   "type": "module",
   "license": "MIT",

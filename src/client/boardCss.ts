@@ -25,6 +25,19 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 /* 面板顶视图切换行（设计稿 topbar 的 view-switch 落位到面板内） */
 .dfy-viewbar{display:flex;align-items:center;gap:10px;flex:none;padding:0 2px;z-index:2}
 .dfy-viewbar .chip{margin-left:auto}
+/* byClaude-start IM（钉钉机器人）开关：与 mood chip 同族胶囊；无配置/无机器人/操作中置灰；
+   勾选旁挂监听状态灯（running 绿 / starting 青 / stopped 灰 / error 红）（byClaude） */
+.dfy-root .dfy-im-toggle{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;color:var(--sub);border:1px solid var(--line);border-radius:999px;padding:4px 11px;background:rgba(255,255,255,.7);cursor:pointer;user-select:none}
+.dfy-root .dfy-im-toggle input{accent-color:var(--c1);margin:0;cursor:pointer}
+.dfy-root .dfy-im-toggle.off{color:var(--faint);cursor:default}
+.dfy-root .dfy-im-toggle.off input{accent-color:var(--faint);opacity:.55;cursor:default}
+.dfy-root .dfy-im-hint{font-style:normal;font-size:10px;color:var(--faint)}
+.dfy-root .dfy-im-dot{width:7px;height:7px;border-radius:999px;flex:none}
+.dfy-root .dfy-im-running{background:var(--ok)}
+.dfy-root .dfy-im-starting{background:var(--c1)}
+.dfy-root .dfy-im-stopped{background:var(--faint)}
+.dfy-root .dfy-im-error{background:var(--danger)}
+/* byClaude-end */
 /* mood 三态轻量保留：work 环提速 / listen 光环亮 + 卡片倾身 */
 .dfy-root .work-stage[data-mood="work"] .stage-ring{animation-duration:4s}
 .dfy-root .work-stage[data-mood="listen"] .stage-halo{filter:brightness(1.45)}
@@ -155,7 +168,14 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .grad{background:linear-gradient(92deg,var(--c1),var(--c2) 45%,var(--c3));background-size:200% auto;-webkit-background-clip:text;background-clip:text;color:transparent;animation:dfy-sheen 4.5s linear infinite}
 .dfy-root .removing{animation:dfy-fadeout .26s ease forwards}
 .dfy-root /* ---- chat messages (both views) ---- */
-.msgs{display:flex;flex-direction:column;gap:10px;min-height:0}
+/* byClaude-start overflow-anchor 关掉：翻页 prepend 的滚动位置由 MsgList 的 JS 锚定恢复，
+   浏览器原生锚定与它二选一，避免双重调整跳屏（byClaude） */
+.msgs{display:flex;flex-direction:column;gap:10px;min-height:0;overflow-anchor:none}
+/* byClaude-end */
+.dfy-root /* byClaude-start 历史翻页提示行（消息流顶部：「更多消息请往上查看」/加载中；可点）（byClaude） */
+.dfy-more-hint{align-self:center;flex:none;display:inline-flex;align-items:center;gap:6px;border:1px dashed var(--line2);background:transparent;color:var(--faint);font-size:11px;letter-spacing:.04em;padding:3px 14px;border-radius:999px;cursor:pointer;transition:.15s;font-family:inherit}
+.dfy-root .dfy-more-hint:hover{color:var(--c1);border-color:rgba(8,145,178,.5);background:rgba(8,145,178,.05)}
+/* byClaude-end */
 .dfy-root .msg{display:flex;gap:10px;align-items:flex-end;animation:dfy-rise .35s ease both}
 .dfy-root .msg.user{flex-direction:row-reverse}
 .dfy-root .msg .ava{width:30px;height:30px;border-radius:50%;flex:none;display:grid;place-items:center;font-size:11px;font-weight:600;overflow:hidden}
@@ -387,21 +407,49 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 /* byClaude-end */
 .dfy-root .hero-orb{position:relative;width:52px;height:52px;border-radius:50%;overflow:hidden;display:grid;place-items:center;border:1px solid rgba(124,58,237,.25);animation:dfy-breathe 4.5s ease-in-out infinite;transform:rotateY(-10deg);transform-style:preserve-3d;flex:none}
 .dfy-root .hero-orb img{width:100%;height:100%;object-fit:cover;display:block;object-position:50% 22%;transform:translateZ(16px)}
+.dfy-root /* byClaude-start 跑动轨道：running 时 orb 在 84px 轨道上左右来回跑（帧动画之上叠加位移），
+   负 margin 抵掉轨道比 orb 多出的占位，不挤压右侧文案；停下回 breathe 待机呼吸。
+   patrol 关键帧把 breathe 的缩放/透明度脉冲并进来——两条 animation 都写 transform，
+   后者整体覆盖前者，不能简单并列（byClaude） */
+.hero-orb-track{flex:none;width:84px;height:52px;display:flex;align-items:center;justify-content:center;margin:0 -16px;pointer-events:none}
+.hero.running .hero-orb{animation:dfy-patrol 2.6s ease-in-out infinite}
+@keyframes dfy-patrol{0%,100%{transform:rotateY(-10deg) translateX(-16px) scale(1);opacity:.9}50%{transform:rotateY(-10deg) translateX(16px) scale(1.045);opacity:1}}
+@media (prefers-reduced-motion: reduce){.dfy-root .hero.running .hero-orb{animation:dfy-breathe 4.5s ease-in-out infinite}}
+/* byClaude-end */
 .dfy-root .hero-mid{min-width:0;flex:1}
 .dfy-root .hero-label{display:flex;align-items:center;gap:6px;font-size:10.5px;letter-spacing:.1em;color:var(--faint);font-weight:600}
 .dfy-root .hero-label .ic{width:12px;height:12px;color:var(--c1)}
-.dfy-root .thought{font-size:13.5px;font-weight:500;margin-top:3px;min-height:21px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.dfy-root /* byClaude-start 思考横幅＝状态栏：空闲态一行钳制（最新回复摘要），不放全文；
+   规则行不能带 .dfy-root 前缀——上一行的 .dfy-root 会拼成后代选择器（byClaude） */
+.thought{font-size:13.5px;font-weight:500;margin-top:3px;min-height:21px;display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere}
+/* byClaude-end */
+.dfy-root /* byClaude-start 思考过程滚动条：live 态切单行尾部滚动（文本随流式增量向前滚）；
+   截断收在正文 span 上，行尾打字光标不被省略号吃掉（byClaude） */
+.thought.live{display:block;white-space:nowrap;overflow:hidden}
+.thought.live .mono{display:inline-block;max-width:calc(100% - 14px);overflow:hidden;text-overflow:ellipsis;vertical-align:bottom}
+/* byClaude-end */
 .dfy-root .hero-timer{text-align:right;flex:none}
-.dfy-root .hero-timer .t{font-family:var(--mono);font-size:19px;font-weight:500}
+.dfy-root /* byClaude-start 计时文字装的是「X 分钟前」这类文案而非等宽数字，19px 显得过大（byClaude） */
+.hero-timer .t{font-family:var(--mono);font-size:13px;font-weight:600}
+/* byClaude-end */
 .dfy-root .hero-timer small{display:block;font-size:10px;color:var(--faint);letter-spacing:.08em}
 .dfy-root .cs-body{flex:1;min-height:0;display:flex;gap:14px;margin-top:12px}
 .dfy-root .chat-panel, .dfy-root .flow-panel{display:flex;flex-direction:column;gap:10px;min-width:0;padding:14px;border-radius:18px;background:var(--panel);border:1px solid var(--line);backdrop-filter:blur(12px)}
 .dfy-root .chat-panel{flex:1}
-.dfy-root .flow-panel{flex:1.15}
+/* byClaude-start 执行流面板收窄：固定 340px 侧栏，宽度让给对话主区（byClaude） */
+.dfy-root .flow-panel{flex:0 0 340px;min-width:0}
+/* byClaude-end */
 .dfy-root .chat-panel .msgs{flex:1;min-height:0;overflow-y:auto;padding-right:4px}
 .dfy-root .chat-panel .msgs::-webkit-scrollbar{width:8px}
 .dfy-root .chat-panel .msgs::-webkit-scrollbar-thumb{background:rgba(15,23,42,.15);border-radius:99px}
 .dfy-root .flow{position:relative;display:flex;flex-direction:column;gap:8px}
+/* byClaude-start 执行流分页条：居中 上一页/页码/下一页；禁用态压灰（byClaude） */
+.dfy-root .flow-pager{flex:none;display:flex;align-items:center;justify-content:center;gap:10px;padding-top:2px}
+.dfy-root .flow-pager .mini.pg{color:var(--sub);cursor:pointer}
+.dfy-root .flow-pager .mini.pg:hover:not(:disabled){border-color:rgba(8,145,178,.5);color:var(--c1)}
+.dfy-root .flow-pager .mini.pg:disabled{opacity:.4;cursor:default}
+.dfy-root .flow-pager .pg-info{font-size:11px;color:var(--faint)}
+/* byClaude-end */
 .dfy-root .flow::before{content:"";position:absolute;left:16px;top:16px;bottom:16px;width:2px;background:linear-gradient(180deg,rgba(5,150,105,.35),rgba(8,145,178,.4) 55%,rgba(15,23,42,.08))}
 .dfy-root .step{position:relative;display:flex;gap:12px;padding:9px 12px;border-radius:14px;transition:.2s;animation:dfy-rise .35s ease both}
 .dfy-root .step:hover{background:rgba(255,255,255,.65)}
@@ -434,6 +482,10 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 }
 @container (max-width:920px){.dfy-root #view-workbench, .dfy-root #view-console{grid-template-columns:1fr}.dfy-root .chat-body .work-stage{display:none}}
 @container (max-width:760px){.dfy-root .v1-work, .dfy-root .cs-body{flex-direction:column;overflow-y:auto}.dfy-root .work-chat, .dfy-root .work-tasks, .dfy-root .chat-panel, .dfy-root .flow-panel{flex:none}.dfy-root .work-chat{min-height:380px}.dfy-root .team-side{width:auto;flex-direction:row;flex-wrap:wrap;overflow-y:visible}.dfy-root .team-side .team-side-scroll{flex-direction:row;flex-wrap:wrap;overflow-y:visible}.dfy-root .team-side .tmb-tag{display:none}}
+/* byClaude-start 堆叠模式（≤760 容器）消息区限高：msgs 无上限会把面板撑到整个
+   消息流的高度（实测 4815px），执行流被顶出五千像素外——限 52vh 让消息区内滚，
+   两个面板在列内紧凑排布（byClaude） */
+@container (max-width:760px){.dfy-root .chat-panel .msgs{max-height:52vh}.dfy-root .flow-panel .flow-scroll{max-height:52vh}}
 /* byClaude-start 矮屏统一改「内容区内部滚」（与 760 容器断点同构）：整体滚动会把
    输入条卷进折叠区推出面板外（实测工作台/控制台 bottom 均超容器 500px+），
    输入条必须常驻底部（byClaude） */
@@ -443,7 +495,8 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .work-chat{min-height:420px}
 .dfy-root .cs-body{overflow-y:auto}
 .dfy-root .chat-panel, .dfy-root .flow-panel{flex:none}
-.dfy-root .chat-panel .msgs{min-height:280px}}`
+.dfy-root .chat-panel .msgs{min-height:280px;max-height:52vh}
+.dfy-root .flow-panel .flow-scroll{max-height:52vh}}`
 // byClaude-end
 // byClaude-end
 

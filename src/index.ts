@@ -15,6 +15,7 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-workspace'
 import { registerCompactTool, registerContextTools } from './context.js'
 import { registerHandoffTool } from './handoff.js'
+import { detectImConfigured, registerImEndpoint, syncImMarkerWorkspace } from './im.js'
 import { registerSessionTools } from './sessions.js'
 import { registerWorkspaceTools } from './workspaces.js'
 import { BUTLER_HOME_TITLE } from './client/constants.js'
@@ -54,6 +55,20 @@ export function apply(ctx: Context): void {
     ctx.logger.warn('dafeiyu: butler home workspace unavailable: %o', error)
   })
 
+  // byClaude-start IM（钉钉机器人）配置：权威口径 = dsh-im 的连接配置表
+  // （$DSH_HOME/sdb/application.sqlite 的 im_connection_settings，行数>0 即已配置），
+  // ~/.dafeiyu/im.json 兜底；host 把该事实同步成标记工作区（~/.dafeiyu/im）带给
+  // 面板——dsh 无 host→client 配置通道（byClaude）
+  void (async () => {
+    await syncImMarkerWorkspace(ctx, await detectImConfigured())
+  })().catch((error: unknown) => {
+    ctx.logger.warn('dafeiyu: im marker workspace unavailable: %o', error)
+  })
+  // byClaude-end
+  // byClaude-start /api/dafeiyu/im 精确路由：面板勾选框经同源 HTTP 直调同宿主 dsh-im
+  // 服务（通用通道 RPC 在 web 壳没有 HTTP 载体）；connection/im 缺席时静默退场（byClaude）
+  registerImEndpoint(ctx)
+  // byClaude-end
   // byClaude-start agent team 聊天室：每成员一个独立工作区（~/.dafeiyu/team/<id>/），
   // AGENTS.md 播种角色与技能域——上下文互不污染（byClaude）
   void (async () => {

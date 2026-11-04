@@ -12,7 +12,7 @@
  * 「未分组」桶里，用一条按 data-row-key 的样式规则藏掉那一行。
  */
 import type { IWorkspaces, WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
-import { isButlerHomePath, isTeamHomePath } from './constants.js'
+import { isButlerHomePath, isImHomePath, isTeamHomePath } from './constants.js'
 
 /** 已安装源对象登记：防重复包装（插件重载先 dispose 再装，正常不会命中）。 */
 const patched = new WeakSet<object>()
@@ -43,7 +43,7 @@ export function installHomeFilter(workspaces: IWorkspaces): () => void {
   source.getSnapshot = (): WorkspaceSnapshot => {
     const raw = readRaw()
     if (cache?.raw === raw) return cache.view
-    const view: WorkspaceSnapshot = { ...raw, items: raw.items.filter(ws => !isButlerHomePath(ws.path) && !isTeamHomePath(ws.path)) }
+    const view: WorkspaceSnapshot = { ...raw, items: raw.items.filter(ws => !isButlerHomePath(ws.path) && !isTeamHomePath(ws.path) && !isImHomePath(ws.path)) }
     cache = { raw, view }
     return view
   }

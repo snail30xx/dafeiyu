@@ -16,7 +16,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 import type {} from '@deepseek-ai/dsh-client-ui-layout/client'
 import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 import { FatfishMoreRow, type FatfishMoreInjected } from './FatfishMoreRow.js'
-import { ButlerPanel, type ButlerInjected, type ModelCatalogLike, type ModelSelectionLike } from './ButlerPanel.js'
+import { ButlerPanel, type ButlerInjected, type ImBotLike, type ModelCatalogLike, type ModelSelectionLike } from './ButlerPanel.js'
 import { ButlerChatHost } from './ButlerChatHost.js'
 import { FatfishIcon } from './FatfishIcon.js'
 import { BUTLER_TITLE, TEAM_AGENTS, isButlerHomePath, isTeamHomePath, teamSessionTitle } from './constants.js'
@@ -331,11 +331,64 @@ export function apply(ctx: Context): void {
   })()
   // byClaude-end
 
+  // byClaude-start IM（钉钉机器人）遥控面：通用通道 RPC 在 web 壳没有 HTTP 载体（CLI 0.2.1
+  // webserver 只服务 /api），host 侧已把 dsh-im 的快照/开关包装成 /api/dafeiyu/im 精确路由
+  // （connection.fetch.register，owner 会话鉴权）。这里同源 POST 该路由：成功返回
+  // {ok:true, bots}，路由缺席/非 owner/任何异常一律 null，面板按「IM 服务不可用」置灰（byClaude）
+  /** 从响应里剥出面板关心的 bots 最小字段；形状不对返回 null。 */
+  const parseBots = (payload: unknown): readonly ImBotLike[] | null => {
+    const bots = (payload as { readonly bots?: unknown } | null | undefined)?.bots
+    if (!Array.isArray(bots)) return null
+    const rows: ImBotLike[] = []
+    for (const row of bots) {
+      const bot = row as Partial<ImBotLike> | null
+      if (bot === null || typeof bot.id !== 'number' || typeof bot.name !== 'string'
+        || typeof bot.enabled !== 'boolean' || typeof bot.revision !== 'number'
+        || typeof bot.listenerStatus !== 'string') continue
+      const status = bot.listenerStatus
+      if (status !== 'stopped' && status !== 'starting' && status !== 'running' && status !== 'error') continue
+      rows.push({
+        id: bot.id, name: bot.name, enabled: bot.enabled, listenerStatus: status, revision: bot.revision,
+        ...(typeof bot.lastError === 'string' ? { lastError: bot.lastError } : {}),
+      })
+    }
+    return rows
+  }
+  const imPost = async (body: Record<string, unknown>): Promise<readonly ImBotLike[] | null> => {
+    try {
+      const response = await fetch('/api/dafeiyu/im', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(15_000),
+      })
+      if (!response.ok) return null
+      const payload: unknown = await response.json()
+      if (payload === null || typeof payload !== 'object' || (payload as { ok?: unknown }).ok !== true) return null
+      return parseBots(payload)
+    } catch {
+      return null
+    }
+  }
+  const imControl: ButlerInjected['imControl'] = {
+    // toggle 的响应即开关后的新快照，免二次读取。
+    bots: () => imPost({ action: 'snapshot' }),
+    toggle: (botId, expectedRevision, enabled) => imPost({ action: 'toggle', botId, expectedRevision, enabled }),
+  }
+  // byClaude-end
+
   const PANEL_ID = 'dafeiyu'
   const panelId = PANEL_ID as Parameters<typeof ctx.layout.selectPanel>[0]
 
   const injected: ButlerInjected = {
     hooks: { sessionList: sessions.list, workspaceList: ctx.workspaces.list },
+    // byClaude-start IM（钉钉机器人）遥控面：请求失败返回 null，面板按不可用置灰（byClaude）
+    imControl,
+    // byClaude-end
+    // byClaude-start 原始工作区快照源（同一源对象；getSnapshot 被 homeFilter 包装投影，
+    // 面板检测 IM 标记工作区须读 rawWorkspaceSnapshot 而非投影 items）（byClaude）
+    workspaceRaw: ctx.workspaces.list,
+    // byClaude-end
     models,
     acquire: async (): Promise<SessionReference> => {
       const id = await ensureButlerSession(sessions, ctx.workspaces)
