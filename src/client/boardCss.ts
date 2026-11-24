@@ -496,7 +496,71 @@ overflow:hidden;container-type:inline-size;-webkit-font-smoothing:auto}
 .dfy-root .cs-body{overflow-y:auto}
 .dfy-root .chat-panel, .dfy-root .flow-panel{flex:none}
 .dfy-root .chat-panel .msgs{min-height:280px;max-height:52vh}
-.dfy-root .flow-panel .flow-scroll{max-height:52vh}}`
+.dfy-root .flow-panel .flow-scroll{max-height:52vh}}
+/* byClaude-start 派活台账完成卡（自动汇报）：绿调卡片 + 已完成章 + 总结两行钳制（byClaude） */
+.dfy-root .tcard.ok{border-color:rgba(5,150,105,.32);background:linear-gradient(150deg,rgba(5,150,105,.05),rgba(5,150,105,.015))}
+.dfy-root .tcard.ok:hover{border-color:rgba(5,150,105,.5)}
+.dfy-root .tcard .t-ico.green{color:var(--ok);border-color:rgba(5,150,105,.4);background:rgba(5,150,105,.07)}
+.dfy-root .done-chip{font-size:9px;letter-spacing:.1em;color:var(--ok);border:1px solid rgba(5,150,105,.4);border-radius:5px;padding:1px 5px;display:inline-flex;align-items:center;background:rgba(5,150,105,.06)}
+.dfy-root .t-sum{font-size:11.5px;color:var(--sub);margin:7px 0 0 37px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;cursor:default}
+.dfy-root .flow .s-p.s-sum{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.dfy-root .tcard.just{animation:dfy-donepulse 1.5s ease}
+@keyframes dfy-donepulse{0%{box-shadow:0 0 0 0 rgba(5,150,105,.45)}100%{box-shadow:0 0 0 12px rgba(5,150,105,0)}}
+/* byClaude-start 派活台账等交互卡：amber 调 + 等待章（byClaude） */
+.dfy-root .tcard.wait{border-color:rgba(217,119,6,.35);background:linear-gradient(150deg,rgba(217,119,6,.06),rgba(217,119,6,.02))}
+.dfy-root .tcard.wait:hover{border-color:rgba(217,119,6,.55)}
+.dfy-root .tcard .t-ico.amber{color:var(--warn);border-color:rgba(217,119,6,.4);background:rgba(217,119,6,.07)}
+.dfy-root .wait-chip{font-size:9px;letter-spacing:.1em;color:var(--warn);border:1px solid rgba(217,119,6,.4);border-radius:5px;padding:1px 5px;display:inline-flex;align-items:center;background:rgba(217,119,6,.06)}
+/* byClaude-end */
+/* byClaude-start 自主意识模块（v3 A 卡·design/autonomy-scout-v3.html）：管家 ONES
+   巡检区——渐变玻璃卡与执行流的中性白卡区隔；三态 ok/hot/err；发现新需求时内嵌
+   条目行（项目徽标 + 标题 + 批准/忽略），底部 mind-cut 分区线切开执行流（byClaude） */
+.dfy-root .mind{display:flex;flex-direction:column;gap:9px;padding:11px 13px;border-radius:15px;background:linear-gradient(135deg,rgba(8,145,178,.08),rgba(124,58,237,.08));border:1px solid rgba(8,145,178,.22);box-shadow:inset 0 1px 0 rgba(255,255,255,.65)}
+.dfy-root .mind.hot{background:linear-gradient(135deg,rgba(8,145,178,.13),rgba(124,58,237,.13));border-color:rgba(8,145,178,.4);box-shadow:0 6px 18px rgba(8,145,178,.16),inset 0 1px 0 rgba(255,255,255,.65)}
+.dfy-root .mind.err{background:linear-gradient(135deg,rgba(217,119,6,.08),rgba(220,38,38,.05));border-color:rgba(217,119,6,.4)}
+.dfy-root .mind-top{display:flex;align-items:center;gap:8px;min-width:0}
+.dfy-root .mind-ava{width:26px;height:26px;border-radius:9px;flex:none;background:linear-gradient(135deg,var(--c1),var(--c2));display:flex;align-items:center;justify-content:center;font-size:13px;box-shadow:0 3px 8px rgba(8,145,178,.35)}
+.dfy-root .mind-id{display:flex;flex-direction:column;min-width:0}
+.dfy-root .mind-kind{font-size:9.5px;letter-spacing:.14em;color:var(--faint);font-weight:600}
+.dfy-root .mind-title{font-size:12.5px;font-weight:650;color:var(--txt)}
+.dfy-root .mind-state{margin-left:auto;display:inline-flex;align-items:center;gap:6px;font-size:10.5px;font-weight:600;padding:2.5px 10px;border-radius:999px;flex:none;font-variant-numeric:tabular-nums}
+.dfy-root .mind-state.ok{color:#047857;background:rgba(5,150,105,.09);border:1px solid rgba(5,150,105,.3)}
+.dfy-root .mind-state.hot{color:#0e7490;background:rgba(255,255,255,.75);border:1px solid rgba(8,145,178,.45)}
+.dfy-root .mind-state.err{color:#b45309;background:rgba(217,119,6,.1);border:1px solid rgba(217,119,6,.4)}
+.dfy-root .mind-mid{display:flex;align-items:center;gap:6px;flex-wrap:wrap;padding-left:34px}
+.dfy-root .m-chip{display:inline-flex;align-items:center;gap:4px;font-size:10px;font-weight:600;padding:2px 8px;border-radius:999px;border:1px solid rgba(8,145,178,.3);color:#0e7490;background:rgba(8,145,178,.07)}
+.dfy-root .m-chip.err{border-color:rgba(217,119,6,.45);color:#b45309;background:rgba(217,119,6,.08)}
+.dfy-root .mind-next{margin-left:auto;font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
+.dfy-root .found{display:flex;flex-direction:column;gap:6px}
+.dfy-root .found-head{display:flex;align-items:center;gap:6px;padding-left:34px;font-size:11.5px;font-weight:650;color:var(--txt)}
+.dfy-root .found-head .n{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 5px;border-radius:999px;font-size:10px;font-weight:700;color:#fff;background:linear-gradient(135deg,var(--c1),var(--c2))}
+.dfy-root .req{display:flex;align-items:center;gap:8px;padding:7px 9px;border-radius:10px;background:rgba(255,255,255,.78);border:1px solid rgba(8,145,178,.2)}
+.dfy-root .req .pj{flex:none;font-size:9px;font-weight:700;letter-spacing:.06em;color:#0e7490;border:1px solid rgba(8,145,178,.35);border-radius:5px;padding:1px 5px;background:rgba(8,145,178,.06)}
+.dfy-root .req .tt{font-size:11.5px;font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--txt)}
+.dfy-root .req .btns{margin-left:auto;display:flex;gap:5px;flex:none}
+.dfy-root .req .b{font-size:10px;font-weight:600;border-radius:7px;padding:3px 9px;cursor:pointer;border:1px solid;font-family:inherit;transition:.15s}
+.dfy-root .req .b.ok{color:#047857;border-color:rgba(5,150,105,.4);background:rgba(5,150,105,.07)}
+.dfy-root .req .b.ok:hover{background:rgba(5,150,105,.16)}
+.dfy-root .req .b.no{color:var(--sub);border-color:var(--line2);background:transparent}
+.dfy-root .req .b.no:hover{color:var(--txt);background:rgba(15,23,42,.05)}
+.dfy-root .req .b:disabled{opacity:.5;cursor:default}
+.dfy-root .found-more{padding-left:34px;font-size:10px;color:var(--faint);font-variant-numeric:tabular-nums}
+.dfy-root .mind-cut{height:1px;background:var(--line);flex:none;margin:1px 0 -1px}
+/* 关停态（总开关 off）：灰化降饱和，头像与徽标随卡褪色。 */
+.dfy-root .mind.off{background:linear-gradient(135deg,rgba(100,116,139,.07),rgba(100,116,139,.04));border-color:rgba(100,116,139,.28)}
+.dfy-root .mind.off .mind-ava{filter:grayscale(.7);opacity:.6;box-shadow:none}
+.dfy-root .mind-state.off{color:#64748b;background:rgba(100,116,139,.1);border:1px solid rgba(100,116,139,.35)}
+/* 自主性总开关（toggle）：28×16 轨道 + 10 圆点，on 青渐变 / off 灰。 */
+.dfy-root .mind-sw{flex:none;width:28px;height:16px;padding:0;border:none;border-radius:999px;cursor:pointer;
+  background:rgba(100,116,139,.3);position:relative;transition:background .15s ease;margin-left:2px}
+.dfy-root .mind-sw.on{background:linear-gradient(135deg,var(--c1),var(--c2));box-shadow:0 1px 4px rgba(8,145,178,.35)}
+.dfy-root .mind-sw-dot{position:absolute;top:3px;left:3px;width:10px;height:10px;border-radius:50%;
+  background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.3);transition:left .15s ease}
+.dfy-root .mind-sw.on .mind-sw-dot{left:15px}
+.dfy-root .mind-sw:disabled{opacity:.5;cursor:default}
+/* 关停说明行（off 且无活时的 mind-mid 内容）。 */
+.dfy-root .mind-off-hint{font-size:10.5px;color:var(--sub);line-height:1.5}
+/* byClaude-end */`
 // byClaude-end
 // byClaude-end
 

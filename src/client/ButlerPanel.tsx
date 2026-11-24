@@ -26,7 +26,7 @@ import type {
 } from '@deepseek-ai/dsh-api-session-controller/client'
 import type { WorkspaceSnapshot } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
-import { BUTLER_TITLE, isButlerHomePath, isImHomePath, TEAM_AGENTS, TEAM_DEFAULT_AGENT, TEAM_SESSION_PREFIX } from './constants.js'
+import { BUTLER_TITLE, isButlerHomePath, isImHomePath, TEAM_AGENTS, TEAM_DEFAULT_AGENT, TEAM_SESSION_PREFIX, type AutonomyStatus, type AutonomyToggleResult, type ProposalDecision, type ProposalReport, type ProposalsSnapshot, type TaskReport } from './constants.js'
 import { TEAM_PERSONAS_ALL } from './teamPersonas.js'
 import { rawWorkspaceSnapshot } from './homeFilter.js'
 import type { TeamAgentDef } from './constants.js'
@@ -72,6 +72,19 @@ export interface ButlerInjected {
   // byClaude-start IM（钉钉机器人）遥控面（dsh-im 的 '/im' RPC 经 connection 服务）；null = 通道不可用（byClaude）
   readonly imControl: ButlerImControl | null
   // byClaude-end
+  // byClaude-start 派活台账数据面：host 的 /api/dafeiyu/tasks 轮询（完成检测见
+  // host 侧 tasks.ts）；null = 通道不可用，面板隐藏「已完成·自动汇报」能力（byClaude）
+  readonly tasks: () => Promise<readonly TaskReport[] | null>
+  // byClaude-end
+  // byClaude-start 管家提议数据面：host 的 /api/dafeiyu/proposals 轮询（巡检见
+  // host 侧 autonomy.ts），同一响应带自主循环心跳；null = 通道不可用，面板隐藏
+  // 「管家提议」组与心跳行（byClaude）
+  readonly proposals: () => Promise<ProposalsSnapshot | null>
+  /** 主人裁决提议：ok:false 带端点真实原因（每日上限/派活失败等，toast 透传）；null = 网络层失败。 */
+  readonly decideProposal: (id: string, action: 'approve' | 'ignore') => Promise<ProposalDecision | null>
+  /** 自主性总开关（A 卡 toggle）：改 ones.enabled 立即生效；null = 网络层失败。 */
+  readonly toggleAutonomy: (enabled: boolean) => Promise<AutonomyToggleResult | null>
+  // byClaude-end
   /** 取得管家会话引用：找不到就新建并改名，返回已 retain 的引用（面板负责 release）。 */
   readonly acquire: () => Promise<SessionReference>
   // byClaude-start agent team 聊天室：成员会话引用工厂（独立工作区 = 独立上下文）（byClaude）
@@ -115,6 +128,16 @@ export interface ModelCatalogLike {
       } | undefined
     }>
   }>
+}
+// byClaude-end
+
+// byClaude-start ONES 巡检项目的显示名：autonomy 配置用别名/uuid（vas 无短别名，
+// 只能用 uuid），面板翻译成人话；未知项目回退截断显示（byClaude）
+const ONES_PROJECT_LABELS: Record<string, string> = { vos: 'VOS', vbs: 'VBS', '7mRHdFBMDzZs8r6s': 'VAS' }
+
+/** ONES 项目名 → 面板短名（未知项目截断保底）。 */
+function onesProjectLabel(project: string): string {
+  return ONES_PROJECT_LABELS[project] ?? (project.length > 10 ? `${project.slice(0, 6)}…` : project)
 }
 // byClaude-end
 
@@ -838,9 +861,11 @@ function TaskCard({ row, stage, just, onOpen, onApprove, onReject, t }: {
 }
 
 /** 控制台大步骤（设计稿 .flow .step）：done / live / wait 三态时间线行。 */
-function FlowStep({ row, stage, onOpen, onApprove, onReject, t }: {
+function FlowStep({ row, stage, report, onOpen, onApprove, onReject, t }: {
   row: SessionSummary
   stage: 'ongoing' | 'pending' | 'done'
+  /** 派活台账的完成汇报：有则正文行展示总结/注记（替代项目名）。 */
+  report?: TaskReport | undefined
   onOpen: () => void
   onApprove: () => void
   onReject: () => void
@@ -850,6 +875,15 @@ function FlowStep({ row, stage, onOpen, onApprove, onReject, t }: {
   const wait = stage === 'pending'
   const project = cwdName(row.cwd)
   const icon = live ? undefined : wait ? 'power' : 'check'
+  // byClaude-start 台账汇报行：等交互 → 等待提示 + 去处理；完成 → 总结两行钳制（byClaude）
+  const waiting = report?.status === 'waiting-input'
+  const waitingKind = waiting ? t(`tasks.waiting.${report?.pendingKind ?? 'other'}`) : undefined
+  const reportLine = waiting
+    ? t('tasks.waiting.hint')
+    : report !== undefined
+      ? (report.summary ?? (report.note !== undefined ? t(`tasks.note.${report.note}`) : t('tasks.noSummary')))
+      : undefined
+  // byClaude-end
   return (
     <li
       className={`step ${live ? 'live' : wait ? 'wait' : 'done'}`}
@@ -871,20 +905,222 @@ function FlowStep({ row, stage, onOpen, onApprove, onReject, t }: {
       <div className="s-body">
         <div className="s-h">
           <b>{row.displayTitle}</b>
-          <span className="s-tag">{live ? t('board.running') : wait ? t('stage.pending') : t('stage.done')}</span>
+          <span className="s-tag">{live ? t('board.running') : waitingKind !== undefined ? waitingKind : wait ? t('stage.pending') : t('stage.done')}</span>
         </div>
-        <p className="s-p">{project !== '' ? project : row.displayTitle}</p>
+        {/* byClaude-start 正文行优先展示台账汇报（等交互提示/完成总结），没有则回退项目目录名（byClaude） */}
+        <p className={`s-p${reportLine !== undefined ? ' s-sum' : ''}`} title={reportLine}>
+          {reportLine ?? (project !== '' ? project : row.displayTitle)}
+        </p>
+        {/* byClaude-end */}
         {live && <div className="s-bar indet" role="progressbar" aria-label={row.displayTitle}><i /></div>}
-        {wait && (
+        {wait && !waiting && (
           <div className="s-acts">
             <button type="button" className="mini ok" onClick={event => { event.stopPropagation(); onApprove() }}><Icon n="check" className="ic xs" />{t('board.approve')}</button>
             <button type="button" className="mini no" onClick={event => { event.stopPropagation(); onReject() }}><Icon n="x" className="ic xs" />{t('board.reject')}</button>
+          </div>
+        )}
+        {waiting && (
+          <div className="s-acts">
+            <button type="button" className="mini ok" onClick={event => { event.stopPropagation(); onOpen() }}><Icon n="message-circle" className="ic xs" />{t('tasks.waitGo')}</button>
           </div>
         )}
       </div>
     </li>
   )
 }
+
+// byClaude-start 派活台账完成卡（自动汇报）：绿勾 + 标题 + 「已完成」章 + 总结两行钳制；
+// 会话还在时可点击跳转，session-gone 且会话已消失时退化为纯展示（byClaude）
+/** 台账完成卡：report = host 完成判定产物（总结或原因注记）。 */
+function DoneCard({ report, title, just, onOpen, t }: {
+  report: TaskReport
+  title: string
+  just: boolean
+  onOpen: (() => void) | undefined
+  t: (key: DafeiyuKey) => string
+}) {
+  const line = report.summary ?? (report.note !== undefined ? t(`tasks.note.${report.note}`) : t('tasks.noSummary'))
+  return (
+    <article
+      className={`tcard ok${just ? ' just' : ''}`}
+      role={onOpen !== undefined ? 'button' : undefined}
+      tabIndex={onOpen !== undefined ? 0 : undefined}
+      title={onOpen !== undefined ? t('board.openHint') : line}
+      onClick={onOpen}
+      onKeyDown={event => {
+        if (onOpen === undefined || event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+    >
+      <div className="t-top">
+        <span className="t-ico green" aria-hidden="true"><Icon n="check" className="ic sm" /></span>
+        <div className="t-name">{title}<span className="done-chip">{t('stage.done')}</span></div>
+        <span className="t-time mono">{timeAgo(report.completedAt ?? report.dispatchedAt, t)}</span>
+      </div>
+      <div className="t-sum" title={line}>{line}</div>
+    </article>
+  )
+}
+
+// byClaude-start 台账等交互卡：主人只与管家对话的「汇报+下发」面——任务在等
+// 批准/答题时落到这里，「去处理」跳官方对话作答（approval 也可在拦截条直答）；
+// 主人无论在哪里答，pendingInput 一清、任务恢复，完成时另发完成汇报（byClaude）
+/** 台账等交互卡：report = host 采样器发现的 waiting-input 汇报。 */
+function WaitCard({ report, title, onOpen, t }: {
+  report: TaskReport
+  title: string
+  onOpen: () => void
+  t: (key: DafeiyuKey) => string
+}) {
+  const kind = report.pendingKind ?? 'other'
+  return (
+    <article
+      className="tcard wait"
+      role="button"
+      tabIndex={0}
+      title={t('board.openHint')}
+      onClick={onOpen}
+      onKeyDown={event => {
+        if (event.target !== event.currentTarget) return
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault()
+          onOpen()
+        }
+      }}
+    >
+      <div className="t-top">
+        <span className="t-ico amber" aria-hidden="true"><Icon n="power" className="ic sm" /></span>
+        <div className="t-name">{title}<span className="wait-chip">{t(`tasks.waiting.${kind}`)}</span></div>
+        <span className="t-time mono">{timeAgo(report.dispatchedAt, t)}</span>
+      </div>
+      <div className="t-sum">{t('tasks.waiting.hint')}</div>
+      <div className="t-acts">
+        <button type="button" className="mini ok" onClick={event => { event.stopPropagation(); onOpen() }}>
+          <Icon n="message-circle" className="ic xs" />{t('tasks.waitGo')}
+        </button>
+      </div>
+    </article>
+  )
+}
+// byClaude-end
+
+// byClaude-start 自主意识模块（v3 A 卡·design/autonomy-scout-v3.html）：管家自己的
+// ONES 需求巡检区，与执行流（会话列表）以渐变玻璃卡 + 分区线区隔。三态：正常
+//（项目 chip + 下轮时间）/ 发现新需求（加重卡 + 内嵌条目行，数字做标题、标题行
+// 做正文，就地批准/忽略，最多 3 条、多出折叠）/ 异常（琥珀化，头部点名失败项目，
+// 有活照列）。心跳来自 autonomy-status.json（经 proposals 端点），条目来自提议台账
+// pending；批准是外部写动作，永远只由主人的点击触发（byClaude）
+/** 提议 ID（ones:<project>:<uuid>）→ 项目显示名。 */
+function onesProjectOf(id: string): string {
+  return onesProjectLabel(id.split(':')[1] ?? '')
+}
+
+/** 自主意识模块：status = 巡检心跳（老宿主可缺席）；pending = 待裁决提议（新→旧）。 */
+function AutonomyMind({ status, pending, busy, onDecision, onToggle, toggleBusy, t }: {
+  status: AutonomyStatus | undefined
+  pending: readonly ProposalReport[]
+  busy: string | undefined
+  onDecision: (id: string, action: 'approve' | 'ignore') => void
+  onToggle: (enabled: boolean) => void
+  toggleBusy: boolean
+  t: (key: DafeiyuKey) => string
+}) {
+  if (status === undefined && pending.length === 0) return null
+  const clock = (ts: number): string => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const entries = status !== undefined ? Object.entries(status.projects) : []
+  const failed = entries.filter(([, row]) => row.lastError !== undefined)
+  const scoutAt = status?.lastScoutAt ?? status?.startedAt ?? Date.now()
+  const overdue = status !== undefined && status.enabled
+    && Date.now() - scoutAt > (status.intervalMinutes + 5) * 60_000
+  const disabled = status !== undefined && !status.enabled
+  const found = pending.length
+  // 变体优先级：关停 = off（灰化降饱和）＞ 失败/超时 = err（琥珀）＞ 有活 = hot ＞ 正常。
+  const variant = disabled ? 'off' : failed.length > 0 || overdue ? 'err' : found > 0 ? 'hot' : 'ok'
+  const quiet = status?.inQuietHours === true ? ` · ${t('autonomy.quiet')}` : ''
+  const pill = disabled ? t('autonomy.off')
+    : failed.length > 0 ? `${failed.map(([project]) => onesProjectLabel(project)).join('、')} ✗ ${clock(scoutAt)}`
+    : overdue ? t('autonomy.stale')
+    : found > 0 ? `${clock(scoutAt)} ${t('autonomy.checked')}`
+    : `${t('autonomy.ok')} ${clock(scoutAt)}`
+  const shown = pending.slice(0, 3)
+  const rest = found - shown.length
+  const next = status?.nextScoutAt !== undefined && !disabled
+    ? t('autonomy.next').replace('{time}', clock(status.nextScoutAt)) : ''
+  const footNote = failed.length > 0
+    ? `${failed.map(([project]) => onesProjectLabel(project)).join('、')}${t('autonomy.down')}${failed[0]?.[1]?.lastError !== undefined ? `（${failed[0][1].lastError.slice(0, 40)}）` : ''}`
+    : ''
+  const detail = entries.map(([project, row]) => row.lastError !== undefined
+    ? `${onesProjectLabel(project)} ✗ ${row.lastError.slice(0, 60)}`
+    : `${onesProjectLabel(project)} ✓`).join('\n')
+  const minutes = status?.intervalMinutes ?? 30
+  return (
+    <section className={`mind ${variant}`} title={`${t('autonomy.tip')}${detail === '' ? '' : `\n${detail}`}`}>
+      <div className="mind-top">
+        <span className="mind-ava" aria-hidden="true">🐟</span>
+        <span className="mind-id">
+          <span className="mind-kind">{t('autonomy.kind')}</span>
+          <span className="mind-title">{t('autonomy.name')}</span>
+        </span>
+        <span className={`mind-state ${variant}`}>{pill}{quiet}</span>
+        {/* 自主性总开关：关巡检不关裁决（pending 仍可批准/忽略）。 */}
+        <button type="button" className={`mind-sw${disabled ? '' : ' on'}`}
+          aria-pressed={!disabled} disabled={toggleBusy || status === undefined}
+          aria-label={t('autonomy.switch')}
+          title={disabled ? t('autonomy.switch.on.hint').replace('{n}', String(minutes)) : t('autonomy.switch.off.hint')}
+          onClick={() => { onToggle(disabled) }}>
+          <span className="mind-sw-dot" aria-hidden="true" />
+        </button>
+      </div>
+      {found > 0
+        ? (
+          <div className="found">
+            <div className="found-head">
+              <span className="n">{found}</span>
+              {t('autonomy.found').replace('{n}', String(found))}
+              {disabled ? '' : ` · ${t('autonomy.found.pending')}`}
+            </div>
+            {shown.map(report => (
+              <div className="req" key={report.id}>
+                <span className="pj">{onesProjectOf(report.id)}</span>
+                <span className="tt" title={report.detail}>{report.title.replaceAll('_', ' ')}</span>
+                <span className="btns">
+                  <button type="button" className="b ok" disabled={busy === report.id}
+                    onClick={() => { onDecision(report.id, 'approve') }}>{t('board.approve')}</button>
+                  <button type="button" className="b no" disabled={busy === report.id}
+                    onClick={() => { onDecision(report.id, 'ignore') }}>{t('proposals.ignore')}</button>
+                </span>
+              </div>
+            ))}
+            <div className="found-more">
+              {[rest > 0 ? t('autonomy.found.more').replace('{n}', String(rest)) : '',
+                footNote, next].filter(part => part !== '').join(' · ')}
+            </div>
+          </div>
+          )
+        : disabled
+          ? (
+            // 关停无活：一行大白话说明开关后果（裁决不随巡检关闭，有活时 found 区照常显示）。
+            <div className="mind-mid">
+              <span className="mind-off-hint">{t('autonomy.off.hint').replace('{n}', String(minutes))}</span>
+            </div>
+            )
+          : (
+            <div className="mind-mid">
+              {entries.map(([project, row]) => (
+                <span className={`m-chip${row.lastError !== undefined ? ' err' : ''}`} key={project}>
+                  {onesProjectLabel(project)} {row.lastError !== undefined ? '✗' : '✓'}
+                </span>
+              ))}
+              {next !== '' && <span className="mind-next">{next}</span>}
+            </div>
+            )}
+    </section>
+  )
+}
+// byClaude-end
 
 // byClaude-start
 /** 自绘输入条（设计稿 .ask-box）：Enter 直排管家会话队列；工具行 = 模型选择 + 思考深度 + 发送。 */
@@ -1018,7 +1254,7 @@ function AskBox({ disabled, placeholder, sendLabel, catalog, selection, onSelect
  * @returns 工作台/控制台双视图 + 自绘输入条 + 官方完整对话浮层。
  */
 export function ButlerPanel({
-  useSessionList, useWorkspaceList, useSessionStatus, workspaceRaw, imControl, acquire, acquireTeam, openSession, models, listSkills, t, renderSlot, SessionProvider,
+  useSessionList, useWorkspaceList, useSessionStatus, workspaceRaw, imControl, tasks, proposals, decideProposal, toggleAutonomy, acquire, acquireTeam, openSession, models, listSkills, t, renderSlot, SessionProvider,
 }: ButlerPanelProps) {
   const [reference, setReference] = useState<SessionReference | undefined>(undefined)
   const [failed, setFailed] = useState(false)
@@ -1250,6 +1486,105 @@ export function ButlerPanel({
   // 整表对象在两次失效之间引用稳定，派生看板用 useMemo 缓存。
   const listState = useSessionList(value => value)
   const workspaceState = useWorkspaceList(value => value)
+
+  // byClaude-start 派活台账轮询（host 完成检测的数据面）：挂载即拉一次，之后每 10s；
+  // 拉不到（老宿主/路由缺席）保持 null，自动汇报相关 UI 整体退场（byClaude）
+  const [taskReports, setTaskReports] = useState<readonly TaskReport[] | null>(null)
+  useEffect(() => {
+    let alive = true
+    const pull = (): void => {
+      void tasks().then(next => { if (alive) setTaskReports(next) }).catch(() => undefined)
+    }
+    pull()
+    const timer = window.setInterval(pull, 10_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [tasks])
+  // byClaude-end
+  // byClaude-start 管家提议轮询（自主性的数据面）：挂载即拉一次，之后每 10s；
+  // 拉不到保持 null，「管家提议」组与心跳行整体退场。裁决后局部刷新 + busy 防连点（byClaude）
+  const [proposalReports, setProposalReports] = useState<readonly ProposalReport[] | null>(null)
+  const [autonomyStatus, setAutonomyStatus] = useState<AutonomyStatus | undefined>(undefined)
+  const [proposalBusy, setProposalBusy] = useState<string | undefined>(undefined)
+  const [autonomyBusy, setAutonomyBusy] = useState(false)
+  useEffect(() => {
+    let alive = true
+    const pull = (): void => {
+      void proposals().then(next => {
+        if (!alive) return
+        setProposalReports(next?.list ?? null)
+        setAutonomyStatus(next?.autonomy)
+      }).catch(() => undefined)
+    }
+    pull()
+    const timer = window.setInterval(pull, 10_000)
+    return () => { alive = false; window.clearInterval(timer) }
+  }, [proposals])
+  /** 待裁决提议（创建时间倒序全量；自主模块内嵌最新 3 条、多出折叠成计数）。 */
+  const pendingProposals = useMemo(() =>
+    [...(proposalReports ?? [])]
+      .filter(row => row.status === 'pending')
+      .sort((left, right) => right.createdAt - left.createdAt), [proposalReports])
+  /** 自主循环心跳由 AutonomyMind 模块直接消费（v3 A 卡三态），不再单独拼状态行。 */
+  /** 提议裁决：approve 成功即跳执行会话；失败 toast 透传端点真实原因，裁决后立即刷新台账。 */
+  const onProposalDecision = (id: string, action: 'approve' | 'ignore'): void => {
+    setProposalBusy(id)
+    void decideProposal(id, action)
+      .catch(() => null)
+      .then(outcome => {
+        setProposalBusy(undefined)
+        if (outcome === null) { toast(t('proposals.fail')); return }
+        if (!outcome.ok) { toast(`${t('proposals.fail')}：${outcome.message}`); return }
+        if (action === 'approve') {
+          toast(t('proposals.approved'))
+          if (outcome.proposal?.sessionId !== undefined) openSession(outcome.proposal.sessionId as SessionId)
+        } else {
+          toast(t('proposals.ignored'))
+        }
+        void proposals().then(next => {
+          setProposalReports(next?.list ?? null)
+          setAutonomyStatus(next?.autonomy)
+        }).catch(() => undefined)
+      })
+  }
+  /** 自主性总开关：成功就地更新心跳（A 卡立即换形态），失败 toast 透传原因。 */
+  const onAutonomyToggle = (enabled: boolean): void => {
+    if (autonomyBusy) return
+    setAutonomyBusy(true)
+    void toggleAutonomy(enabled)
+      .catch(() => null)
+      .then(outcome => {
+        setAutonomyBusy(false)
+        if (outcome === null) { toast(t('autonomy.switch.fail')); return }
+        if (!outcome.ok) { toast(`${t('autonomy.switch.fail')}：${outcome.message}`); return }
+        if (outcome.autonomy !== undefined) setAutonomyStatus(outcome.autonomy)
+        else if (autonomyStatus !== undefined) setAutonomyStatus({ ...autonomyStatus, enabled })
+        toast(enabled ? t('autonomy.switch.on.done') : t('autonomy.switch.off.done'))
+      })
+  }
+  // byClaude-end
+  /** 台账 done 表：sessionId → 完成汇报（带总结或原因注记）。 */
+  const ledgerDoneMap = useMemo(() => {
+    const map = new Map<string, TaskReport>()
+    for (const report of taskReports ?? []) if (report.status === 'done') map.set(report.sessionId, report)
+    return map
+  }, [taskReports])
+  /** 台账 waiting-input 表：sessionId → 等交互汇报（批准/答题等主人处理）。 */
+  const ledgerWaitingMap = useMemo(() => {
+    const map = new Map<string, TaskReport>()
+    for (const report of taskReports ?? []) if (report.status === 'waiting-input') map.set(report.sessionId, report)
+    return map
+  }, [taskReports])
+  /** 台账已完成条目（完成时间倒序，取最近 6 条进工作台列表）。 */
+  const autoDone = useMemo(() =>
+    [...ledgerDoneMap.values()]
+      .sort((left, right) => (right.completedAt ?? right.dispatchedAt) - (left.completedAt ?? left.dispatchedAt))
+      .slice(0, 6), [ledgerDoneMap])
+  /** 台账等交互条目（最近派活在前）。 */
+  const autoWaiting = useMemo(() =>
+    [...ledgerWaitingMap.values()]
+      .sort((left, right) => right.dispatchedAt - left.dispatchedAt), [ledgerWaitingMap])
+  // byClaude-end
+
   const board = useMemo(() => {
     const butlerId = reference?.sessionId
     const archived = new Set(workspaceState.archivedSessionIds)
@@ -1265,15 +1600,19 @@ export function ButlerPanel({
     // 被忽略的会话从看板整个消失（不算完成，也不进任何分组）。
     const visible = rows.filter(row => ignoreMap[row.id] === undefined)
     const ongoing = visible.filter(row => row.running).sort(byRecent)
+    // byClaude-start 台账已判完成/等交互的会话不再进「待确认」（它们有各自的汇报分组）（byClaude）
     const pending = visible.filter(row =>
-      !row.running && doneMap[row.id] === undefined && Date.now() - row.updatedAt < PENDING_WINDOW_MS)
+      !row.running && doneMap[row.id] === undefined
+      && ledgerDoneMap.get(row.id) === undefined && ledgerWaitingMap.get(row.id) === undefined
+      && Date.now() - row.updatedAt < PENDING_WINDOW_MS)
       .sort(byRecent)
+    // byClaude-end
     const done = visible
       .filter(row => !ongoing.includes(row) && !pending.includes(row))
       .sort(byRecent)
       .slice(0, DONE_LIST_CAP)
     return { ongoing, pending, done }
-  }, [listState, workspaceState, doneMap, ignoreMap, reference?.sessionId])
+  }, [listState, workspaceState, doneMap, ignoreMap, reference?.sessionId, ledgerDoneMap, ledgerWaitingMap])
 
   // byClaude-start 执行流单列时间序：三组（进行中/待确认/已完成）合并成一条按
   // 最后活跃时间（updatedAt 降序）排的列表，最近 20 个一页；行上仍带各自 stage
@@ -1286,8 +1625,14 @@ export function ButlerPanel({
     for (const row of board.done) stageOf.set(row.id, 'done')
     return [...board.ongoing, ...board.pending, ...board.done]
       .sort((left, right) => right.updatedAt - left.updatedAt)
-      .map(row => ({ row, stage: stageOf.get(row.id) ?? 'done' }))
-  }, [board])
+      // byClaude-start 台账汇报随行：done 行带总结/注记、waiting-input 行带等待提示（byClaude）
+      .map(row => ({
+        row,
+        stage: stageOf.get(row.id) ?? 'done',
+        report: ledgerDoneMap.get(row.id) ?? ledgerWaitingMap.get(row.id),
+      }))
+      // byClaude-end
+  }, [board, ledgerDoneMap, ledgerWaitingMap])
   const flowPageCount = Math.max(1, Math.ceil(flowRows.length / FLOW_PAGE_SIZE))
   const flowPageIndex = Math.min(flowPage, flowPageCount - 1)
   const flowPageRows = flowRows.slice(flowPageIndex * FLOW_PAGE_SIZE, (flowPageIndex + 1) * FLOW_PAGE_SIZE)
@@ -1366,6 +1711,49 @@ export function ButlerPanel({
       if (aliveRef.current) setToasts(previous => previous.filter(item => item.id !== id))
     }, 2600)
   }, [])
+
+  // byClaude-start 派活完成自动汇报的到场反馈：轮询发现新的台账 done（上一拍还没有）
+  // → 她蹦一下 + 右下角 toast 报总结 + 完成卡脉冲（与手动收尾同一套确认语言）（byClaude）
+  const prevLedgerDoneRef = useRef<ReadonlySet<string> | null>(null)
+  useEffect(() => {
+    const ids = new Set(ledgerDoneMap.keys())
+    const prev = prevLedgerDoneRef.current
+    prevLedgerDoneRef.current = ids
+    if (prev === null) return // 首拍只记基线（历史完成不轰炸）。
+    const fresh = [...ids].filter(id => !prev.has(id))
+    if (fresh.length === 0) return
+    setBouncing(true)
+    setJustDoneIds(new Set(fresh))
+    window.setTimeout(() => { if (aliveRef.current) setJustDoneIds(new Set()) }, 1500)
+    for (const id of fresh.slice(0, 3)) {
+      const report = ledgerDoneMap.get(id)
+      if (report === undefined) continue
+      const title = report.title ?? listState.byId[id as SessionId]?.title ?? id.slice(0, 8)
+      const tail = report.summary ?? (report.note !== undefined ? t(`tasks.note.${report.note}`) : t('tasks.noSummary'))
+      toast(`${t('toast.taskDone').replace('{title}', title)}：${tail.slice(0, 80)}`)
+    }
+  }, [ledgerDoneMap, listState, t, toast])
+  // byClaude-end
+
+  // byClaude-start 等交互到场的提醒：轮询发现新的 waiting-input（上一拍还没有）
+  // → 蹦一下 + toast 报「任务等你处理」；主人答完任务恢复时保持安静（完成另有播报）（byClaude）
+  const prevLedgerWaitingRef = useRef<ReadonlySet<string> | null>(null)
+  useEffect(() => {
+    const ids = new Set(ledgerWaitingMap.keys())
+    const prev = prevLedgerWaitingRef.current
+    prevLedgerWaitingRef.current = ids
+    if (prev === null) return // 首拍只记基线。
+    const fresh = [...ids].filter(id => !prev.has(id))
+    if (fresh.length === 0) return
+    setBouncing(true)
+    for (const id of fresh.slice(0, 3)) {
+      const report = ledgerWaitingMap.get(id)
+      if (report === undefined) continue
+      const title = report.title ?? listState.byId[id as SessionId]?.title ?? id.slice(0, 8)
+      toast(`${t('toast.taskWaiting').replace('{title}', title)}（${t(`tasks.waiting.${report.pendingKind ?? 'other'}`)}）`)
+    }
+  }, [ledgerWaitingMap, listState, t, toast])
+  // byClaude-end
 
   // 「已完成」覆盖表只算纯更新；持久化放副作用里（StrictMode 双调不双写坏状态）。
   const markDone = useCallback((id: SessionId, title: string) => {
@@ -1789,6 +2177,13 @@ export function ButlerPanel({
             <section className="work-tasks" aria-label={t('tasks.title')}>
               <div className="panel-h"><Icon n="activity" className="ic sm" />{t('tasks.title')}</div>
               <div className="flow-scroll">
+                {/* byClaude-start 自主意识模块（v3 A 卡）：巡检心跳 + 新需求就地裁决，
+                    渐变玻璃卡 + 分区线与执行流（会话列表）区隔（byClaude） */}
+                <AutonomyMind status={autonomyStatus} pending={pendingProposals}
+                  busy={proposalBusy} onDecision={onProposalDecision}
+                  onToggle={onAutonomyToggle} toggleBusy={autonomyBusy} t={t} />
+                <div className="mind-cut" aria-hidden="true" />
+                {/* byClaude-end */}
                 <div className="flow-label"><span className="gdot cyan" aria-hidden="true" />{t('stage.ongoing')}</div>
                 {board.ongoing.length === 0
                   ? <div className="dfy-empty-row">{t('board.empty.ongoing')}</div>
@@ -1798,6 +2193,21 @@ export function ButlerPanel({
                       onApprove={() => { markDone(row.id, row.displayTitle) }}
                       onReject={() => { ignoreSession(row.id, row.displayTitle) }} />
                   ))}
+                {/* byClaude-start 派活台账的等交互汇报组：任务在等批准/答题时落到这里（byClaude） */}
+                {autoWaiting.length > 0 && (
+                  <>
+                    <div className="flow-label"><span className="gdot amber" aria-hidden="true" />{t('tasks.waiting.label')}</div>
+                    {autoWaiting.map(report => {
+                      const row = listState.byId[report.sessionId as SessionId]
+                      const title = report.title ?? row?.title ?? report.sessionId.slice(0, 8)
+                      return (
+                        <WaitCard key={report.sessionId} report={report} title={title} t={t}
+                          onOpen={() => { openSession(report.sessionId as SessionId) }} />
+                      )
+                    })}
+                  </>
+                )}
+                {/* byClaude-end */}
                 <div className="flow-label"><span className="gdot amber" aria-hidden="true" />{t('stage.pending')}</div>
                 {board.pending.length === 0
                   ? <div className="dfy-empty-row">{t('board.empty.pending')}</div>
@@ -1807,6 +2217,23 @@ export function ButlerPanel({
                       onApprove={() => { markDone(row.id, row.displayTitle) }}
                       onReject={() => { ignoreSession(row.id, row.displayTitle) }} />
                   ))}
+                {/* byClaude-start 派活台账的自动完成汇报组：host 判定完成后落到这里，卡片带总结（byClaude） */}
+                {autoDone.length > 0 && (
+                  <>
+                    <div className="flow-label"><span className="gdot green" aria-hidden="true" />{t('tasks.autoDone')}</div>
+                    {autoDone.map(report => {
+                      const row = listState.byId[report.sessionId as SessionId]
+                      const title = report.title ?? row?.title ?? report.sessionId.slice(0, 8)
+                      return (
+                        <DoneCard key={report.sessionId} report={report} title={title} just={justDoneIds.has(report.sessionId)} t={t}
+                          onOpen={row !== undefined || report.note !== 'session-gone'
+                            ? () => { openSession(report.sessionId as SessionId) }
+                            : undefined} />
+                      )
+                    })}
+                  </>
+                )}
+                {/* byClaude-end */}
               </div>
               <div className="done-sum">
                 <Icon n="check-check" className="ic sm" />{t('done.sum').replace('{n}', String(board.done.length))}
@@ -1902,10 +2329,17 @@ export function ButlerPanel({
                   {t('tasks.title').replace(' · ', ' · ')}{t('tasks.count').replace('{n}', String(watching))}
                 </div>
                 <div className="flow-scroll">
+                  {/* byClaude-start 自主意识模块（v3 A 卡，与工作台同款）：控制台是默认
+                      视图，主人第一眼就该看到管家自主巡检的死活与新活（byClaude） */}
+                  <AutonomyMind status={autonomyStatus} pending={pendingProposals}
+                    busy={proposalBusy} onDecision={onProposalDecision}
+                    onToggle={onAutonomyToggle} toggleBusy={autonomyBusy} t={t} />
+                  <div className="mind-cut" aria-hidden="true" />
+                  {/* byClaude-end */}
                   {flowRows.length === 0 && <div className="dfy-empty-row">{t('tasks.empty')}</div>}
                   <ol className="flow">
-                    {flowPageRows.map(({ row, stage }) => (
-                      <FlowStep key={row.id} row={row} stage={stage} t={t}
+                    {flowPageRows.map(({ row, stage, report }) => (
+                      <FlowStep key={row.id} row={row} stage={stage} report={report} t={t}
                         onOpen={() => { openSession(row.id) }}
                         onApprove={() => { markDone(row.id, row.displayTitle) }}
                         onReject={() => { ignoreSession(row.id, row.displayTitle) }} />

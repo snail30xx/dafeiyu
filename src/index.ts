@@ -15,8 +15,12 @@ import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-workspace'
 import { registerCompactTool, registerContextTools } from './context.js'
 import { registerHandoffTool } from './handoff.js'
-import { detectImConfigured, registerImEndpoint, syncImMarkerWorkspace } from './im.js'
+import { bindImPush, detectImConfigured, registerImEndpoint, syncImMarkerWorkspace } from './im.js'
+import { AutonomyLoop } from './autonomy.js'
+import { ProposalStore, registerProposalsEndpoint } from './proposals.js'
 import { registerSessionTools } from './sessions.js'
+import { TaskTracker, registerTasksEndpoint } from './tasks.js'
+import { registerYoloTools } from './yolo.js'
 import { registerWorkspaceTools } from './workspaces.js'
 import { BUTLER_HOME_TITLE } from './client/constants.js'
 import { TEAM_AGENTS } from './client/constants.js'
@@ -33,8 +37,23 @@ const butlerHomeTitle = BUTLER_HOME_TITLE
 
 /** 注册全部大肥鱼工具；dispose 所属 fiber 即整体注销。 */
 export function apply(ctx: Context): void {
+  // byClaude-start 派活完成自动总结与汇报：台账落盘 + 完成检测监听 + 面板数据端点。
+  // 台账在构造器里异步载入（坏文件按空台账），判定规则与去抖见 tasks.ts 文件头。（byClaude）
+  const tracker = new TaskTracker(ctx)
+  ctx.effect(() => tracker.start(), 'dafeiyu: task completion tracker')
+  registerTasksEndpoint(ctx, tracker)
+  // byClaude-end
+  // byClaude-start 管家自主性（眼里有活）：ONES 巡检差分出新需求落提议台账并推钉钉，
+  // 面板批准后经端点回调派活到 vos-agent-dev 跑 req-dev-pipeline（巡检口径与派活
+  // 内核见 autonomy.ts 文件头）；yolo 工单执行器包装成助手工具（运维工单的手）。（byClaude）
+  const proposals = new ProposalStore(ctx)
+  const autonomy = new AutonomyLoop(ctx, proposals, tracker)
+  ctx.effect(() => autonomy.start(), 'dafeiyu: autonomy loop')
+  registerProposalsEndpoint(ctx, proposals, proposal => autonomy.dispatchProposal(proposal), enabled => autonomy.setEnabled(enabled))
+  registerYoloTools(ctx)
+  // byClaude-end
   registerWorkspaceTools(ctx)
-  registerSessionTools(ctx)
+  registerSessionTools(ctx, tracker)
   registerHandoffTool(ctx)
   registerContextTools(ctx)
   // 压缩服务由部署组合决定（Web 组合默认关闭 compaction-basic）；
@@ -68,6 +87,10 @@ export function apply(ctx: Context): void {
   // byClaude-start /api/dafeiyu/im 精确路由：面板勾选框经同源 HTTP 直调同宿主 dsh-im
   // 服务（通用通道 RPC 在 web 壳没有 HTTP 载体）；connection/im 缺席时静默退场（byClaude）
   registerImEndpoint(ctx)
+  // byClaude-end
+  // byClaude-start 钉钉出站推送端口：同宿主 dsh-im 就绪即绑定（提议/任务完成推送
+  // 首选 Stream 机器人，im.json webhook 兜底）；im 缺席/卸载自动置空回退（byClaude）
+  bindImPush(ctx)
   // byClaude-end
   // byClaude-start agent team 聊天室：每成员一个独立工作区（~/.dafeiyu/team/<id>/），
   // AGENTS.md 播种角色与技能域——上下文互不污染（byClaude）

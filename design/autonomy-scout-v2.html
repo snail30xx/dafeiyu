@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>ONES 巡检 · 视觉稿 v2（与执行流区隔：自主意识模块）</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1240px; overflow-x: hidden; }
+  body {
+    --bg:#eef2f9; --panel:rgba(255,255,255,.72); --panel2:rgba(255,255,255,.92);
+    --line:rgba(15,23,42,.08); --line2:rgba(15,23,42,.16); --txt:#131a2a; --sub:#5b6577; --faint:#8b93a5;
+    --c1:#0891b2; --c2:#7c3aed; --c3:#db2777; --ok:#059669; --warn:#d97706; --danger:#dc2626;
+    --shadow-card:0 10px 28px rgba(15,23,42,.10);
+    background:
+      radial-gradient(1200px 500px at 75% -10%,rgba(124,58,237,.10),transparent 60%),
+      radial-gradient(900px 420px at 8% 108%,rgba(8,145,178,.10),transparent 60%),
+      var(--bg);
+    font-family:-apple-system,'Segoe UI','PingFang SC','Microsoft YaHei',sans-serif;
+    color:var(--txt); padding:28px 32px 40px;
+  }
+  h1 { font-size:17px; font-weight:650; margin-bottom:4px; }
+  .sub-note { font-size:12px; color:var(--faint); margin-bottom:22px; }
+
+  .row { display:flex; gap:26px; margin-bottom:30px; align-items:flex-start; }
+  .caption { width:158px; flex:none; padding-top:14px; }
+  .caption .no { font-size:20px; font-weight:700; color:var(--c1); }
+  .caption .nm { font-size:13.5px; font-weight:650; margin:4px 0 6px; }
+  .caption .ds { font-size:11px; color:var(--sub); line-height:1.6; }
+
+  /* 控制台 flow-panel 仿真 */
+  .flow-panel { flex:0 0 340px; min-width:0; display:flex; flex-direction:column; gap:10px;
+    padding:14px; border-radius:18px; background:var(--panel); border:1px solid var(--line); }
+  .panel-h { display:flex; align-items:center; gap:8px; font-size:11px; font-weight:600;
+    letter-spacing:.12em; color:var(--faint); padding:0 2px; }
+  .panel-h .ic { color:var(--c1); font-size:13px; font-style:normal; }
+  .panel-h .cnt { margin-left:auto; font-weight:500; letter-spacing:.04em; color:var(--sub); }
+  .state-tag { align-self:flex-start; font-size:10px; letter-spacing:.08em; padding:2px 10px;
+    border-radius:999px; margin:-4px 0 -2px; }
+  .state-tag.ok { color:#047857; background:rgba(5,150,105,.08); border:1px solid rgba(5,150,105,.3); }
+  .state-tag.err { color:#b45309; background:rgba(217,119,6,.09); border:1px solid rgba(217,119,6,.4); }
+
+  .frow { display:flex; align-items:center; gap:9px; padding:9px 11px; border-radius:12px;
+    background:rgba(255,255,255,.55); border:1px solid var(--line); }
+  .frow .t { font-size:12.5px; font-weight:600; }
+  .frow .stg { margin-left:auto; font-size:9px; letter-spacing:.1em; color:var(--warn);
+    border:1px solid rgba(217,119,6,.4); border-radius:5px; padding:1px 5px; background:rgba(217,119,6,.06); }
+  .gdot { width:7px; height:7px; border-radius:50%; flex:none; display:inline-block; }
+  .gdot.green { background:var(--ok); }
+  .gdot.amber { background:var(--warn); }
+
+  .divider { height:1px; background:var(--line); margin:2px 0 0; }
+
+  /* ====== V2-1 自主模块（渐变玻璃卡 + 分区线） ====== */
+  .mind { display:flex; flex-direction:column; gap:9px; padding:11px 13px; border-radius:15px;
+    background:linear-gradient(135deg,rgba(8,145,178,.08),rgba(124,58,237,.08));
+    border:1px solid rgba(8,145,178,.22);
+    box-shadow:inset 0 1px 0 rgba(255,255,255,.65); }
+  .mind.err { background:linear-gradient(135deg,rgba(217,119,6,.08),rgba(220,38,38,.05));
+    border-color:rgba(217,119,6,.4); }
+  .mind-top { display:flex; align-items:center; gap:8px; }
+  .mind-ava { width:26px; height:26px; border-radius:9px; flex:none;
+    background:linear-gradient(135deg,var(--c1),var(--c2)); display:flex; align-items:center;
+    justify-content:center; font-size:13px; box-shadow:0 3px 8px rgba(8,145,178,.35); }
+  .mind-kind { font-size:9.5px; letter-spacing:.14em; color:var(--faint); font-weight:600; }
+  .mind-title { font-size:12.5px; font-weight:650; }
+  .mind-state { margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-size:10.5px;
+    font-weight:600; padding:2.5px 10px; border-radius:999px; }
+  .mind-state.ok { color:#047857; background:rgba(5,150,105,.09); border:1px solid rgba(5,150,105,.3); }
+  .mind-state.err { color:#b45309; background:rgba(217,119,6,.1); border:1px solid rgba(217,119,6,.4); }
+  .mind-mid { display:flex; align-items:center; gap:6px; flex-wrap:wrap; padding-left:34px; }
+  .m-chip { display:inline-flex; align-items:center; gap:4px; font-size:10px; font-weight:600;
+    padding:2px 8px; border-radius:999px; border:1px solid rgba(8,145,178,.3);
+    color:#0e7490; background:rgba(8,145,178,.07); }
+  .m-chip.err { border-color:rgba(217,119,6,.45); color:#b45309; background:rgba(217,119,6,.08); }
+  .mind-next { margin-left:auto; font-size:10px; color:var(--faint); font-variant-numeric:tabular-nums; }
+
+  /* ====== V2-2 管家发言气泡 ====== */
+  .say { display:flex; gap:9px; align-items:flex-start; }
+  .say-ava { width:30px; height:30px; border-radius:50%; flex:none; margin-top:2px;
+    background:linear-gradient(135deg,var(--c1),var(--c2)); display:flex; align-items:center;
+    justify-content:center; font-size:15px; box-shadow:0 3px 9px rgba(8,145,178,.3); }
+  .say-bubble { position:relative; flex:1; padding:9px 12px; border-radius:13px;
+    background:linear-gradient(135deg,rgba(8,145,178,.09),rgba(124,58,237,.07));
+    border:1px solid rgba(8,145,178,.24); font-size:11.5px; line-height:1.75; color:var(--txt); }
+  .say-bubble::before { content:''; position:absolute; left:-4px; top:12px; width:8px; height:8px;
+    background:inherit; border-left:1px solid rgba(8,145,178,.24); border-bottom:1px solid rgba(8,145,178,.24);
+    transform:rotate(45deg); }
+  .say-bubble.err { background:rgba(217,119,6,.07); border-color:rgba(217,119,6,.4); }
+  .say-bubble.err::before { border-color:rgba(217,119,6,.4); }
+  .say-who { font-size:9.5px; letter-spacing:.12em; color:var(--faint); font-weight:600; margin-bottom:2px; }
+  .say-txt b { font-weight:650; }
+  .say-meta { display:flex; gap:8px; font-size:9.5px; color:var(--faint); margin-top:3px;
+    font-variant-numeric:tabular-nums; }
+
+  /* ====== V2-3 仪表条 ====== */
+  .gauge { display:flex; align-items:center; gap:9px; padding:8px 12px; border-radius:11px;
+    background:linear-gradient(90deg,rgba(15,23,42,.055),rgba(15,23,42,.02));
+    border:1px solid var(--line2); }
+  .gauge .radar { width:18px; height:18px; border-radius:50%; flex:none; position:relative;
+    border:1.5px solid rgba(8,145,178,.5); overflow:hidden; }
+  .gauge .radar::after { content:''; position:absolute; inset:0;
+    background:conic-gradient(from 0deg,rgba(8,145,178,.55),transparent 70%); }
+  .gauge.err .radar { border-color:rgba(217,119,6,.6); }
+  .gauge.err .radar::after { background:conic-gradient(from 0deg,rgba(217,119,6,.5),transparent 70%); }
+  .gauge-label { font-size:10px; letter-spacing:.12em; font-weight:650; color:var(--sub); }
+  .gauge-leds { display:flex; gap:10px; margin-left:4px; }
+  .led { display:flex; align-items:center; gap:4px; font-size:9.5px; font-weight:600; color:var(--sub); }
+  .led i { width:6px; height:6px; border-radius:50%; background:var(--ok); box-shadow:0 0 6px rgba(5,150,105,.6); }
+  .led.off i { background:var(--warn); box-shadow:0 0 6px rgba(217,119,6,.6); }
+  .gauge-tm { margin-left:auto; font-size:9.5px; color:var(--faint); text-align:right;
+    line-height:1.5; font-variant-numeric:tabular-nums; }
+</style>
+</head>
+<body>
+
+<h1>ONES 巡检 · v2 —— 与执行流彻底区隔的「自主意识」形态</h1>
+<div class="sub-note">执行流 = 中性白卡（你的会话/任务）；巡检 = 管家自己的主动行为，用渐变玻璃/气泡/仪表条 + 分区线拉开视觉身份。左正常 · 右异常。</div>
+
+<!-- ============ V2-1 ============ -->
+<div class="row">
+  <div class="caption">
+    <div class="no">1</div>
+    <div class="nm">自主模块<br>渐变玻璃卡</div>
+    <div class="ds">青→紫渐变玻璃卡独立成区（管家品牌色），底部硬分区线与列表切开；鱼头徽标 + 「自主意识」小字标明身份。</div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag ok">正常态</span>
+    <div class="mind">
+      <div class="mind-top">
+        <span class="mind-ava">🐟</span>
+        <span><div class="mind-kind">自主意识 · ONES</div><div class="mind-title">需求巡检</div></span>
+        <span class="mind-state ok"><i class="gdot green"></i>正常 13:41</span>
+      </div>
+      <div class="mind-mid">
+        <span class="m-chip">VOS ✓</span><span class="m-chip">VBS ✓</span><span class="m-chip">VAS ✓</span>
+        <span class="mind-next">下轮 14:11</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag err">异常态</span>
+    <div class="mind err">
+      <div class="mind-top">
+        <span class="mind-ava">🐟</span>
+        <span><div class="mind-kind">自主意识 · ONES</div><div class="mind-title">需求巡检</div></span>
+        <span class="mind-state err"><i class="gdot amber"></i>VBS 失败 13:41</span>
+      </div>
+      <div class="mind-mid">
+        <span class="m-chip">VOS ✓</span><span class="m-chip err" title="vos2 exit 1">VBS ✗</span><span class="m-chip">VAS ✓</span>
+        <span class="mind-next">下轮 14:11</span>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+</div>
+
+<!-- ============ V2-2 ============ -->
+<div class="row">
+  <div class="caption">
+    <div class="no">2</div>
+    <div class="nm">管家发言<br>气泡</div>
+    <div class="ds">巡检结果说成管家的一句话（带尾巴的气泡 + 鱼头像），和左侧聊天面板同一语言体系；列表完全不沾。异常时气泡换琥珀语气也变。</div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag ok">正常态</span>
+    <div class="say">
+      <span class="say-ava">🐟</span>
+      <div class="say-bubble">
+        <div class="say-who">自主意识 · ONES 需求巡检</div>
+        <div class="say-txt">我盯着 <b>VOS / VBS / VAS</b> 三个项目的新需求，<b>13:41</b> 查过一轮，一切正常；发现新活会列在下面提议区。</div>
+        <div class="say-meta"><span>下轮 14:11</span><span>· 每 30 分钟</span></div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag err">异常态</span>
+    <div class="say">
+      <span class="say-ava">🐟</span>
+      <div class="say-bubble err">
+        <div class="say-who">自主意识 · ONES 需求巡检</div>
+        <div class="say-txt"><b>VBS</b> 那边 13:41 查询挂了（vos2 exit 1），我先记着，<b>14:11</b> 自动重试；VOS / VAS 都正常。</div>
+        <div class="say-meta"><span>下轮 14:11</span><span>· 每 30 分钟</span></div>
+      </div>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+</div>
+
+<!-- ============ V2-3 ============ -->
+<div class="row">
+  <div class="caption">
+    <div class="no">3</div>
+    <div class="nm">仪表条</div>
+    <div class="ds">把巡检做成常驻「仪表」：雷达扫描盘 + 三个项目指示灯 + 右侧时间；深一档的底色和列表卡完全异质。最克制、最像系统件。</div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag ok">正常态</span>
+    <div class="gauge">
+      <span class="radar"></span>
+      <span class="gauge-label">ONES<br>巡检</span>
+      <span class="gauge-leds">
+        <span class="led"><i></i>VOS</span><span class="led"><i></i>VBS</span><span class="led"><i></i>VAS</span>
+      </span>
+      <span class="gauge-tm">13:41 ✓<br>下轮 14:11</span>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+  <div class="flow-panel">
+    <span class="state-tag err">异常态</span>
+    <div class="gauge err">
+      <span class="radar"></span>
+      <span class="gauge-label">ONES<br>巡检</span>
+      <span class="gauge-leds">
+        <span class="led"><i></i>VOS</span><span class="led off"><i></i>VBS</span><span class="led"><i></i>VAS</span>
+      </span>
+      <span class="gauge-tm">13:41 ✗<br>重试 14:11</span>
+    </div>
+    <div class="divider"></div>
+    <div class="panel-h"><i class="ic">⌁</i>执行流<span class="cnt">6 个对话</span></div>
+    <div class="frow"><i class="gdot amber"></i><span class="t">TR[VOS]1204 新生支付通道适配</span><span class="stg">进行中</span></div>
+    <div class="frow"><i class="gdot green"></i><span class="t">工单拉取定时任务异常排查</span><span class="stg">待确认</span></div>
+  </div>
+</div>
+
+</body>
+</html>

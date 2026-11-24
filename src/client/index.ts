@@ -19,7 +19,7 @@ import { FatfishMoreRow, type FatfishMoreInjected } from './FatfishMoreRow.js'
 import { ButlerPanel, type ButlerInjected, type ImBotLike, type ModelCatalogLike, type ModelSelectionLike } from './ButlerPanel.js'
 import { ButlerChatHost } from './ButlerChatHost.js'
 import { FatfishIcon } from './FatfishIcon.js'
-import { BUTLER_TITLE, TEAM_AGENTS, isButlerHomePath, isTeamHomePath, teamSessionTitle } from './constants.js'
+import { BUTLER_TITLE, TEAM_AGENTS, isButlerHomePath, isTeamHomePath, teamSessionTitle, type AutonomyStatus, type AutonomyToggleResult, type ProposalDecision, type ProposalReport, type ProposalsSnapshot, type TaskReport } from './constants.js'
 import { installHomeFilter, rawWorkspaceSnapshot, removeHiddenButlerStyle, setHiddenButlerSession, addHiddenTeamSession } from './homeFilter.js'
 import { NS, zh, en, type DafeiyuKey } from './locales.js'
 
@@ -377,6 +377,142 @@ export function apply(ctx: Context): void {
   }
   // byClaude-end
 
+  // byClaude-start 派活台账数据面：同源 GET /api/dafeiyu/tasks（host 侧 tasks.ts
+  // 注册的精确路由），面板轮询拿台账快照驱动「任务已完成」卡与总结展示；
+  // 路由缺席（老宿主）/非 owner/任何异常一律 null，面板自动隐藏本能力（byClaude）
+  /** 从响应里剥出台账行；形状不对的行跳过，整体不合法返回 null。 */
+  const parseTasks = (payload: unknown): readonly TaskReport[] | null => {
+    const tasks = (payload as { readonly tasks?: unknown } | null | undefined)?.tasks
+    if (!Array.isArray(tasks)) return null
+    const rows: TaskReport[] = []
+    for (const row of tasks) {
+      const task = row as Partial<TaskReport> | null
+      if (task === null || typeof task.sessionId !== 'string' || typeof task.task !== 'string'
+        || (task.status !== 'active' && task.status !== 'waiting-input' && task.status !== 'done')
+        || typeof task.dispatchedAt !== 'number') continue
+      rows.push({
+        sessionId: task.sessionId,
+        task: task.task,
+        ...(typeof task.title === 'string' ? { title: task.title } : {}),
+        status: task.status,
+        dispatchedAt: task.dispatchedAt,
+        ...(task.pendingKind === 'approval' || task.pendingKind === 'question' || task.pendingKind === 'other'
+          ? { pendingKind: task.pendingKind }
+          : {}),
+        ...(typeof task.completedAt === 'number' ? { completedAt: task.completedAt } : {}),
+        ...(typeof task.summary === 'string' ? { summary: task.summary } : {}),
+        ...(task.note === 'session-gone' || task.note === 'no-output' ? { note: task.note } : {}),
+      })
+    }
+    return rows
+  }
+  const fetchTasks: ButlerInjected['tasks'] = async (): Promise<readonly TaskReport[] | null> => {
+    try {
+      const response = await fetch('/api/dafeiyu/tasks', { signal: AbortSignal.timeout(10_000) })
+      if (!response.ok) return null
+      const payload: unknown = await response.json()
+      if (payload === null || typeof payload !== 'object' || (payload as { ok?: unknown }).ok !== true) return null
+      return parseTasks(payload)
+    } catch {
+      return null
+    }
+  }
+  // byClaude-end
+  // byClaude-start 管家提议数据面：GET /api/dafeiyu/proposals 轮询快照、POST 裁决
+  //（approve 由 host 端点回调派活并回写 sessionId）；任何失败 null/不抛，面板自退场（byClaude）
+  /** 从响应里剥出提议行；形状不对的行跳过。 */
+  const parseProposals = (payload: unknown): readonly ProposalReport[] => {
+    const proposals = (payload as { readonly proposals?: unknown } | null | undefined)?.proposals
+    if (!Array.isArray(proposals)) return []
+    const rows: ProposalReport[] = []
+    for (const row of proposals) {
+      const proposal = row as Partial<ProposalReport> | null
+      if (proposal === null || typeof proposal.id !== 'string' || proposal.kind !== 'ones-requirement'
+        || typeof proposal.title !== 'string' || typeof proposal.detail !== 'string'
+        || typeof proposal.createdAt !== 'number'
+        || (proposal.status !== 'pending' && proposal.status !== 'approved' && proposal.status !== 'ignored' && proposal.status !== 'dispatched')) continue
+      rows.push({
+        id: proposal.id,
+        kind: proposal.kind,
+        title: proposal.title,
+        detail: proposal.detail,
+        createdAt: proposal.createdAt,
+        status: proposal.status,
+        ...(typeof proposal.decidedAt === 'number' ? { decidedAt: proposal.decidedAt } : {}),
+        ...(typeof proposal.sessionId === 'string' ? { sessionId: proposal.sessionId } : {}),
+      })
+    }
+    return rows
+  }
+  /** 从响应里剥自主循环心跳；骨架不对按缺席处理（老宿主不带该字段）。 */
+  const parseAutonomy = (payload: unknown): AutonomyStatus | undefined => {
+    const autonomy = (payload as { readonly autonomy?: unknown } | null | undefined)?.autonomy
+    if (autonomy === null || typeof autonomy !== 'object') return undefined
+    const record = autonomy as Partial<AutonomyStatus>
+    if (typeof record.startedAt !== 'number' || record.projects === null
+      || typeof record.projects !== 'object') return undefined
+    return record as AutonomyStatus
+  }
+  const fetchProposals: ButlerInjected['proposals'] = async (): Promise<ProposalsSnapshot | null> => {
+    try {
+      const response = await fetch('/api/dafeiyu/proposals', { signal: AbortSignal.timeout(10_000) })
+      if (!response.ok) return null
+      const payload: unknown = await response.json()
+      if (payload === null || typeof payload !== 'object' || (payload as { ok?: unknown }).ok !== true) return null
+      const autonomy = parseAutonomy(payload)
+      return { list: parseProposals(payload), ...(autonomy !== undefined ? { autonomy } : {}) }
+    } catch {
+      return null
+    }
+  }
+  const decideProposal: ButlerInjected['decideProposal'] = async (id, action): Promise<ProposalDecision | null> => {
+    try {
+      const response = await fetch('/api/dafeiyu/proposals', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id, action }),
+        signal: AbortSignal.timeout(30_000),
+      })
+      const payload: unknown = await response.json().catch(() => undefined)
+      const record = typeof payload === 'object' && payload !== null ? payload as { ok?: unknown; message?: unknown; proposal?: unknown } : undefined
+      if (response.status >= 500 || record === undefined || record.ok !== true) {
+        // 端点回传的真实原因（每日上限/派活失败/非 pending 等）透传给面板 toast。
+        return { ok: false, message: typeof record?.message === 'string' ? record.message : `${response.status}` }
+      }
+      // 裁决行可能缺席（重复点击等）：用入参 id 与动作拼最小投影，面板只看 sessionId。
+      const proposal: ProposalReport | null = typeof record.proposal === 'object' && record.proposal !== null
+        ? parseProposals({ proposals: [record.proposal] })[0] ?? null
+        : { id, kind: 'ones-requirement', title: '', detail: '', createdAt: 0, status: action === 'approve' ? 'approved' : 'ignored' }
+      return { ok: true, proposal }
+    } catch {
+      return null
+    }
+  }
+  // byClaude-start 自主性总开关（A 卡 toggle）：POST action=autonomy，成功附最新心跳（byClaude）
+  const toggleAutonomy: ButlerInjected['toggleAutonomy'] = async (enabled): Promise<AutonomyToggleResult | null> => {
+    try {
+      const response = await fetch('/api/dafeiyu/proposals', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ action: 'autonomy', enabled }),
+        signal: AbortSignal.timeout(15_000),
+      })
+      const payload: unknown = await response.json().catch(() => undefined)
+      const record = typeof payload === 'object' && payload !== null
+        ? payload as { ok?: unknown; message?: unknown; autonomy?: unknown }
+        : undefined
+      if (response.status >= 500 || record === undefined || record.ok !== true) {
+        return { ok: false, message: typeof record?.message === 'string' ? record.message : `${response.status}` }
+      }
+      // 响应体是扁平 {ok, autonomy}（非 GET 的嵌套形态），parseAutonomy 需包一层。
+      const autonomy = parseAutonomy({ autonomy: record.autonomy })
+      return { ok: true, ...(autonomy !== undefined ? { autonomy } : {}) }
+    } catch {
+      return null
+    }
+  }
+  // byClaude-end
+
   const PANEL_ID = 'dafeiyu'
   const panelId = PANEL_ID as Parameters<typeof ctx.layout.selectPanel>[0]
 
@@ -388,6 +524,14 @@ export function apply(ctx: Context): void {
     // byClaude-start 原始工作区快照源（同一源对象；getSnapshot 被 homeFilter 包装投影，
     // 面板检测 IM 标记工作区须读 rawWorkspaceSnapshot 而非投影 items）（byClaude）
     workspaceRaw: ctx.workspaces.list,
+    // byClaude-end
+    // byClaude-start 派活台账数据面：失败返回 null，面板隐藏自动汇报能力（byClaude）
+    tasks: fetchTasks,
+    // byClaude-end
+    // byClaude-start 管家提议数据面（自主性）：轮询 + 裁决（byClaude）
+    proposals: fetchProposals,
+    decideProposal,
+    toggleAutonomy,
     // byClaude-end
     models,
     acquire: async (): Promise<SessionReference> => {

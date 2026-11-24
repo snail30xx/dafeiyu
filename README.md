@@ -28,10 +28,18 @@ DeepSeek Harness（dsh ≥ 0.2.2-alpha）的**对话管家**插件：鲸鱼娘�
 - **IM（钉钉机器人）开关**：面板顶栏勾选「是否开启 IM」。「已配置 IM」以 dsh-im 插件的真实状态为准：只读探测 `$DSH_HOME/sdb/application.sqlite` 的 `im_connection_settings` 表（`DSH_HOME` 取环境变量、缺省 `~/.dsh`，行数 > 0 即已配置；dsh-im 服务面不含连接配置状态，真值只在 SQLite），`~/.dafeiyu/im.json`（`{"webhook": "https://…", "secret": "可选"}`）作兜底，任一命中即已配置。host 启动时把该事实同步成标记工作区（`~/.dafeiyu/im`，对侧边栏隐身）带给面板；未配置时勾选项置灰并提示「未检测到 IM 配置」，勾选态存本地（`dafeiyu.im.enabled`）。
 - 管家会话自动定位/创建：本地记忆 id → 标题「大肥鱼管家」匹配（要求 cwd 是管家之家）→ 在管家之家新建并改名。管家之家工作区、team 成员工作区与会话行均对侧边栏/看板隐身。
 
+**管家自主性（眼里有活找活干，替主人做提议、不替主人做决定）**
+
+- **ONES 需求巡检**：host 侧定时（默认 30 分钟，`~/.dafeiyu/autonomy.json` 可调）调 `vos2 ot --list --project vbs|vos|vas --json` 差分需求数，新需求（uuid 首次出现）落提议台账并推钉钉；首启只建基线不提议（防存量轰炸），`ones-seen.json` 只增不减防滑动窗口误报。
+- **提议裁决**：工作台看板新增「管家提议」组——「批准开发」即在 vos-agent-dev 仓库创建会话、排队 req-dev-pipeline 任务书 prompt（每日派活上限默认 3；静音时段 23:00-08:00 只静推送不静巡检）；「忽略」落定不再打扰。
+- **闭环接力**：派活后走既有流水线——req-dev-pipeline 的人工 gate 挂成 `pendingInput` 时 10s 采样器标 `waiting-input`，拦截条 + 看板 + 钉钉喊人；主人作答即续跑，推分支前的人工确认同机制接住；完成后自动总结 + 钉钉回执。
+- **IM 真推送**：`~/.dafeiyu/im.json` 的 webhook + secret 真实外发（钉钉 markdown + HmacSHA256 加签），任务完成 / 新需求提议 / gate 等人三类事件都会喊人。
+
 **助手工具面（管家的手，聊天里由管家调用）**
 
 | 工具 | 作用 |
 |------|------|
+| `fatfish_yolo_execute` / `fatfish_yolo_result` | 运维工单处理：触发 yolo-agent 执行器（人工审核确认 + 派发执行图）/ 查询执行结果与决策详情。环回 HTTP + token 双闸。`~/.dafeiyu/yolo.json` 可选（`{"baseUrl": "", "token": ""}`：baseUrl 空 = 自动探测同宿主 webServer——桌面端 dafeiyu 与 dsh-yolo-agent 同进程的默认形态；显式 URL = 直连独立部署的 yolo）；yolo 侧 token 对应 `.env` 的 `YOLO_DAFEIYU_TOKEN`（桌面端写 `<DSH_HOME>/yolo-agent.env`） |
 | `fatfish_workspace_list` / `fatfish_workspace_create` / `fatfish_workspace_rename` / `fatfish_workspace_remove` | 列出 / 新建（注册目录）/ 重命名 / 移除项目 |
 | `fatfish_session_list` / `fatfish_session_create` / `fatfish_session_rename` / `fatfish_session_archive` / `fatfish_session_unarchive` / `fatfish_session_pin` | 列出（可按项目过滤、全文搜索）/ 新建 / 重命名 / 归档 / 恢复 / 置顶对话 |
 | `fatfish_session_handoff` | 把当前对话携带全部上下文交接到一个新对话（官方 fork 能力：复制到最近完成轮次或指定 atSeq） |
@@ -74,7 +82,10 @@ src/
 ├── sessions.ts         # 对话工具
 ├── handoff.ts          # 上下文交接（fork）
 ├── context.ts          # 上下文体检与压缩
-├── im.ts               # IM（钉钉机器人）配置检测（dsh-im SQLite 真值 + im.json 兜底）+ 标记工作区同步
+├── im.ts               # IM（钉钉机器人）配置检测 + 真推送（webhook 加签 markdown）
+├── autonomy.ts         # 管家自主循环：ONES 需求巡检差分 + 提议 + 批准派活
+├── proposals.ts        # 提议台账（proposals.json 原子写）+ /api/dafeiyu/proposals 端点
+├── yolo.ts             # yolo-agent 执行器桥接工具（运维工单）
 ├── persona.ts          # 管家人格（AGENTS.md）；团队人格转口自 client/teamPersonas.ts
 └── client/
     ├── index.ts          # client 半侧：面板注册 + 管家/成员会话工厂 + 技能目录

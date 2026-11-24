@@ -11,6 +11,7 @@ import type {} from '@deepseek-ai/dsh-api-session-controller'
 import type {} from '@deepseek-ai/dsh-api-workspace-controller'
 import type {} from '@deepseek-ai/dsh-workspace'
 import { isButlerHomePath } from './client/constants.js'
+import type { TaskTracker } from './tasks.js'
 
 const SESSION_VIEW = {
   type: 'object',
@@ -78,8 +79,9 @@ function titleOf(summary: { readonly projections?: { readonly values?: unknown }
   return direct ?? ''
 }
 
-/** 注册对话工具。 */
-export function registerSessionTools(ctx: Context): void {
+/** 注册对话工具。
+ * @param tracker - 派活台账跟踪器：dispatch 排队成功后登记，完成检测在 tasks.ts。 */
+export function registerSessionTools(ctx: Context, tracker: TaskTracker): void {
   ctx.tools.register(defineTool({
     name: 'fatfish_session_list',
     description:
@@ -338,6 +340,14 @@ export function registerSessionTools(ctx: Context): void {
           mode: 'queue',
           content: [{ type: 'text', text: args.text }],
         }, exec.signal)
+        // byClaude-start 派活登记进台账：完成后由 tasks.ts 自动判定、总结并汇报
+        // （判定规则/去抖/重启对账见该文件头）。登记失败不影响派活结果本身。（byClaude）
+        await tracker.recordDispatch({
+          sessionId: target,
+          task: args.text,
+          ...(args.title !== undefined ? { title: args.title } : {}),
+        }).catch(() => undefined)
+        // byClaude-end
         return { sessionId: target, created, queued: true }
       } catch (error) {
         return ERROR_VIEW('dispatch_failed', `failed to dispatch task: ${String(error)}`)
